@@ -1,676 +1,270 @@
-# AllInVault Architecture
+# Podcast Processing Pipeline Architecture
 
 ## Overview
 
-AllInVault is a podcast processing system designed with a modular, service-oriented architecture that follows SOLID principles. The system is organized into distinct layers with clear responsibilities:
+The AllInVault podcast processing pipeline is a modular system designed to fetch, analyze, download, transcribe, and process podcast episodes. The architecture follows SOLID principles and employs a clear separation of concerns, making it maintainable, extensible, and easy to understand.
 
-1. **Command-Line Interface Layer**: Entry points for user interaction
-2. **Pipeline Orchestration Layer**: Manages the execution flow and stage coordination
-3. **Service Layer**: Contains the core business logic for each processing stage
-4. **Repository Layer**: Handles data persistence and retrieval
-5. **Model Layer**: Defines the data structures
-
-## Pipeline Architecture
-
-The system is built around a flexible, stage-based pipeline architecture that allows for:
-
-- Running the entire pipeline end-to-end
-- Running specific stages individually
-- Processing all episodes or specific episodes
-- Configuring stage-specific parameters
-- Managing dependencies between stages
-
-### Pipeline Stages
-
-The pipeline is divided into these sequential stages:
-
-1. **Fetch Metadata**: Retrieves episode information from YouTube API
-2. **Analyze Episodes**: Identifies full episodes vs shorts based on duration
-3. **Download Audio**: Downloads audio files for the episodes
-4. **Transcribe Audio**: Generates transcriptions using speech-to-text
-5. **Identify Speakers**: Maps speakers in transcripts to actual names
+## Components Diagram
 
 ```
-┌───────────────┐    ┌───────────────┐    ┌───────────────┐    ┌───────────────┐    ┌───────────────┐
-│               │    │               │    │               │    │               │    │               │
-│     Fetch     │    │    Analyze    │    │   Download    │    │   Transcribe  │    │   Identify    │
-│    Metadata   │───▶│   Episodes    │───▶│     Audio     │───▶│     Audio     │───▶│   Speakers    │
-│               │    │               │    │               │    │               │    │               │
-└───────────────┘    └───────────────┘    └───────────────┘    └───────────────┘    └───────────────┘
+┌─────────────────────┐          ┌─────────────────────┐
+│  Command Line       │          │  Configuration      │
+│  Interface (CLI)    │───────┐  │  System             │
+└─────────────────────┘       │  └─────────────────────┘
+                              │           ▲
+                              ▼           │
+┌──────────────────────────────────────────────────────┐
+│                                                      │
+│               Pipeline Orchestrator                  │
+│                                                      │
+└──────────────────────────────────────────────────────┘
+        │            │            │            │
+        ▼            ▼            ▼            ▼
+┌────────────┐  ┌────────────┐  ┌────────────┐  ┌────────────┐
+│  Pipeline  │  │  Pipeline  │  │  Pipeline  │  │  Pipeline  │
+│   Stage 1  │  │   Stage 2  │  │   Stage 3  │  │   Stage N  │
+└────────────┘  └────────────┘  └────────────┘  └────────────┘
+        │            │            │            │
+        ▼            ▼            ▼            ▼
+┌──────────────────────────────────────────────────────┐
+│                                                      │
+│                Service Layer                         │
+│                                                      │
+└──────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌──────────────────────────────────────────────────────┐
+│                                                      │
+│                Repository Layer                      │
+│                                                      │
+└──────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌──────────────────────────────────────────────────────┐
+│                                                      │
+│                  Data Storage                        │
+│                                                      │
+└──────────────────────────────────────────────────────┘
 ```
 
-### Component Diagram
+## Key Components
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                              CLI Layer                                   │
-│                        ┌─────────────┐                                   │
-│                        │ pipeline.py │                                   │
-│                        └─────────────┘                                   │
-└───────────────────────────┬─────────────────────────────────────────────┘
-                            │
-                            ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                     Pipeline Orchestration Layer                         │
-│  ┌─────────────────────────────────────────────────────────────────┐    │
-│  │                    PipelineOrchestrator                          │    │
-│  │                                                                  │    │
-│  │  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐ │    │
-│  │  │  Fetch  │  │ Analyze │  │Download │  │Transcr. │  │Identify │ │    │
-│  │  │  Stage  │  │  Stage  │  │  Stage  │  │  Stage  │  │  Stage  │ │    │
-│  │  └─────────┘  └─────────┘  └─────────┘  └─────────┘  └─────────┘ │    │
-│  └─────────────────────────────────────────────────────────────────┘    │
-└───────────────────────────┬─────────────────────────────────────────────┘
-                            │
-                            ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                           Service Layer                                  │
-│                                                                          │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐     │
-│  │   YouTube   │  │ Downloader  │  │Transcription│  │   Speaker   │     │
-│  │   Service   │  │   Service   │  │   Service   │  │ Ident. Svc  │     │
-│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘     │
-└───────────────────────────┬─────────────────────────────────────────────┘
-                            │
-                            ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         Repository Layer                                 │
-│                                                                          │
-│             ┌─────────────────────────────────────────┐                  │
-│             │          EpisodeRepository              │                  │
-│             └─────────────────────────────────────────┘                  │
-└───────────────────────────┬─────────────────────────────────────────────┘
-                            │
-                            ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                            Data Layer                                    │
-│                                                                          │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐     │
-│  │ episodes.json│  │ audio files │  │ transcripts │  │ other data  │     │
-│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘     │
-└─────────────────────────────────────────────────────────────────────────┘
-```
+### 1. Command Line Interface (CLI)
 
-## Key Classes and Components
+The CLI (`src/cli/pipeline_cmd.py`) provides a user-friendly interface to:
+- Execute specific pipeline stages
+- Process all episodes or specific episodes
+- Control stage dependencies
+- Configure stage-specific parameters
+- Display and verify transcripts
 
-### 1. Pipeline Orchestrator
+### 2. Pipeline Orchestrator
 
-The `PipelineOrchestrator` class is the central coordination point that:
-- Manages the execution of pipeline stages
-- Tracks dependencies between stages
-- Handles the flow of data between stages
-- Provides flexible execution options
+The `PipelineOrchestrator` class manages the execution flow of the pipeline:
+- Maintains the state of stage execution
+- Ensures dependencies between stages are honored
+- Provides flexible execution of individual stages or the full pipeline
+- Passes configuration and context between stages
 
-```python
-orchestrator = PipelineOrchestrator()
-# Execute specific stage
-orchestrator.execute_stage(PipelineStage.DOWNLOAD_AUDIO, episode_ids=['xyz123'])
-# Execute pipeline from start to end
-orchestrator.execute_pipeline(episode_ids=['xyz123'])
-```
+### 3. Pipeline Stages
 
-### 2. Stage Architecture
+Each stage is implemented as a separate class following the same interface:
+- `FetchMetadataStage`: Fetches episode metadata from external sources
+- `AnalyzeEpisodesStage`: Analyzes episodes and categorizes them (full episodes vs shorts)
+- `DownloadAudioStage`: Downloads audio for episodes
+- `TranscribeAudioStage`: Transcribes audio files to text
+- `IdentifySpeakersStage`: Identifies speakers in the transcripts
 
-Each pipeline stage is implemented following a standard interface:
+### 4. Service Layer
 
-- `AbstractStage`: Base class defining stage contracts
-- Concrete stage implementations (e.g., `FetchMetadataStage`, `DownloadAudioStage`)
-- `StageResult`: Container for stage execution results
+The service layer contains specialized services for specific tasks:
+- `BatchTranscriberService`: Handles batch transcription of episodes
+- `DeepgramTranscriptionService`: Interfaces with Deepgram API for transcription
+- `SpeakerIdentificationService`: Identifies speakers in transcripts
+- `LLMService`: Provides Large Language Model capabilities
 
-This design allows for:
-- Unified interface for all stages
-- Clear dependency management
-- Consistent error handling
-- Flexible extension with new stages
+### 5. Repository Layer
 
-### 3. Command-Line Interface
+The repository layer provides data access abstraction:
+- `JsonFileRepository`: Manages episode data storage and retrieval
+- Follows the repository pattern for clean data access
 
-The system provides a unified command-line interface with:
-- Multiple operation modes (pipeline, display, verify)
-- Stage selection options
-- Episode filtering capabilities
-- Configuration parameters for each stage
-- Dependency control
+### 6. Models
 
-```
-# Pipeline operations
-python pipeline.py pipeline --stages fetch_metadata,download_audio --episodes xyz123,abc456
-python pipeline.py pipeline --start-stage download_audio --end-stage identify_speakers
-
-# Display operations
-python pipeline.py display --episode xyz123 --format json
-
-# Verification operations
-python pipeline.py verify --stats-only
-```
-
-### 4. Repository Layer
-
-The `JsonFileRepository` provides a consistent data access mechanism:
-- CRUD operations for episode data
-- Data persistence to JSON files
-- Serialization/deserialization of models
-
-### 5. Data Models
-
-The `PodcastEpisode` model encapsulates all episode data:
-
-```
-PodcastEpisode
-├── video_id: str                     # YouTube video ID
-├── title: str                        # Episode title
-├── description: str                  # Episode description
-├── published_at: datetime            # Publication date
-├── channel_id: str                   # YouTube channel ID
-├── channel_title: str                # Channel name
-├── tags: List[str]                   # Video tags
-├── duration: str                     # ISO 8601 duration from YouTube
-├── view_count: int                   # View count
-├── like_count: int                   # Like count
-├── comment_count: int                # Comment count
-├── thumbnail_url: str                # Thumbnail URL
-├── audio_filename: str               # Path to audio file
-├── transcript_filename: str          # Path to transcript file
-├── transcript_duration: float        # Duration of transcript in seconds
-├── transcript_utterances: int        # Number of utterances in transcript
-├── speaker_count: int                # Number of speakers
-└── metadata: Dict                    # Additional metadata
-    ├── type: str                     # FULL or SHORT
-    ├── duration_seconds: int         # Duration in seconds
-    └── coverage_percentage: float    # Transcript coverage
-```
+The system uses well-defined data models:
+- `PodcastEpisode`: Represents podcast episode data
+- `StageResult`: Represents the result of pipeline stage execution
 
 ## Data Flow
 
-1. YouTube data is fetched and stored in episodes.json
-2. Episode metadata is enriched with duration analysis
-3. Audio files are downloaded and linked to episodes
-4. Transcription is performed and linked to episodes
-5. Speakers are identified and added to episode metadata
+1. The user initiates a command through the CLI
+2. The Pipeline Orchestrator determines which stages to execute based on the command
+3. Each stage is executed in sequence, with dependencies honored
+4. Each stage fetches required data from the repository, processes it, and updates the repository
+5. Results are returned to the orchestrator and eventually to the CLI
+6. The CLI displays the results to the user
 
-## Extension Points
+## Design Principles
 
-The architecture is designed to be extensible:
+The architecture follows several key design principles:
 
-1. **New Stages**: Add new classes derived from AbstractStage
-2. **Alternative Services**: Implement new services for different providers
-3. **Different Repositories**: Implement new repository classes
-4. **Enhanced Models**: Extend data models with additional fields
+1. **Single Responsibility Principle**: Each component has a single, well-defined responsibility
+2. **Open/Closed Principle**: The system is open for extension but closed for modification
+3. **Dependency Inversion**: Components depend on abstractions, not implementations
+4. **Separation of Concerns**: Clear separation between data access, business logic, and user interface
+5. **Modularity**: Components can be replaced or modified independently
 
-## Design Patterns
+## Configuration
 
-The system leverages several design patterns:
+The system is configured through a configuration system that loads settings from environment variables and/or configuration files.
 
-1. **Strategy Pattern**: For pluggable service implementations
-2. **Repository Pattern**: For data access abstraction
-3. **Command Pattern**: In the CLI implementation
-4. **Abstract Factory**: For stage creation
-5. **Dependency Injection**: For service composition
+## Extensibility
 
-## SOLID Principles Application
+New stages can be added by implementing the `AbstractStage` interface and registering them with the orchestrator.
 
-1. **Single Responsibility**: Each class has a single responsibility
-2. **Open/Closed**: Extensions via inheritance without modification
-3. **Liskov Substitution**: Service implementations are interchangeable
-4. **Interface Segregation**: Clean interfaces for each component
-5. **Dependency Inversion**: High-level modules depend on abstractions
+## Future Improvements
 
-## System Overview
+1. Add more robust error handling and retry mechanisms
+2. Implement a database repository for better scalability
+3. Add a web interface for easier interaction
+4. Implement more advanced speaker identification techniques
+5. Add support for more transcription providers
+6. Implement a caching layer for improved performance
 
-AllInVault is a comprehensive podcast analysis platform designed to download, process, transcribe, and analyze podcast episodes. The system follows a modular, service-oriented architecture that adheres to SOLID principles for maintainability and extensibility.
+## Detailed Implementation Diagram
 
-## Core Components
-
-```
-┌───────────────────┐     ┌─────────────────┐     ┌───────────────────┐
-│                   │     │                 │     │                   │
-│  Episode Retrieval│─────▶ Audio Processing│─────▶    Transcription  │
-│                   │     │                 │     │                   │
-└───────────────────┘     └─────────────────┘     └───────────────────┘
-          │                       │                        │
-          │                       │                        │
-          ▼                       ▼                        ▼
-┌───────────────────┐     ┌─────────────────┐     ┌───────────────────┐
-│                   │     │                 │     │                   │
-│  Metadata Storage │     │  Audio Storage  │     │ Transcript Storage│
-│                   │     │                 │     │                   │
-└───────────────────┘     └─────────────────┘     └───────────────────┘
-```
-
-## Project Structure
-
-```
-AllInVault/
-├── data/                       # Data storage
-│   ├── audio/                  # Downloaded audio files
-│   ├── json/                   # Metadata storage
-│   └── transcripts/            # Transcript storage
-├── src/                        # Source code
-│   ├── cli/                    # Command-line interfaces
-│   │   └── pipeline_cmd.py     # Unified CLI implementation
-│   ├── models/                 # Data models
-│   │   └── podcast_episode.py  # Podcast episode model
-│   ├── repositories/           # Data access layer
-│   │   └── episode_repository.py # Episode repository
-│   ├── services/               # Business logic
-│   │   ├── youtube_service.py  # YouTube API service
-│   │   ├── downloader_service.py # Audio downloader service
-│   │   ├── transcription_service.py # Transcription service
-│   │   ├── episode_analyzer.py # Episode analysis service
-│   │   ├── batch_transcriber.py # Batch transcription service
-│   │   ├── pipeline_orchestrator.py # Pipeline orchestration service
-│   │   └── speaker_identification_service.py # Speaker identification
-│   └── utils/                  # Utilities
-│       └── config.py           # Configuration utilities
-├── pipeline.py                 # Single entry point for all operations
-├── .env                        # Environment variables
-├── requirements.txt            # Python dependencies
-├── README.md                   # Project documentation
-└── architecture.md             # Architecture documentation
-```
-
-## Data Flow and Integration
-
-### YouTube to Transcript Information Flow
-
-1. **YouTube Metadata Retrieval**:
-   - `YouTubeService` fetches podcast episode metadata from YouTube API
-   - Extracts key information: title, description, duration, publish date, statistics
-
-2. **Episode Analysis**:
-   - `EpisodeAnalyzerService` categorizes episodes as FULL or SHORT based on duration
-   - Updates metadata in the repository with duration in seconds and episode type
-
-3. **Audio Processing**:
-   - `DownloaderService` downloads audio files for selected episodes
-   - Audio files are stored in the audio directory with standardized filenames
-   - Episode objects are updated with audio_filename references
-
-4. **Transcription**:
-   - `DeepgramTranscriptionService` processes audio files and generates transcripts
-   - Transcript JSON contains detailed information including:
-     - Word-by-word timestamps
-     - Speaker diarization
-     - Utterance boundaries
-     - Full transcript duration
-   - Metadata fields are updated in the episode object:
-     - `transcript_filename`: Path to stored transcript
-     - `transcript_duration`: Duration of the transcribed content in seconds
-     - `transcript_utterances`: Count of utterances in the transcript
-     - `speaker_count`: Number of unique speakers identified
-
-5. **Repository Updates**:
-   - `EpisodeRepository` saves all metadata changes back to persistent storage
-   - Ensures data consistency between YouTube metadata and transcript information
-
-### Critical Integration Points
-
-1. **Duration Synchronization**:
-   - YouTube provides duration in ISO 8601 format (e.g., "PT1H25M30S")
-   - Transcription service provides duration in seconds
-   - `EpisodeAnalyzerService` converts YouTube duration to seconds for comparison
-
-2. **Transcript Completeness**:
-   - System compares `duration_seconds` (from YouTube) with `transcript_duration`
-   - Calculates and stores coverage percentage in episode metadata
-   - Flags incomplete transcripts for further processing
-
-3. **Metadata Enrichment**:
-   - Original YouTube metadata is preserved in the episode model
-   - Transcript-related metadata is added to the same model
-   - Updates are made via repository to ensure persistence
-
-## Service Layer
-
-### 1. Episode Retrieval Services
-
-**Key Components:**
-- `YouTubeService`: Fetches podcast episodes from YouTube
-  - Retrieves metadata via the YouTube API
-  - Converts YouTube API responses to `PodcastEpisode` objects
-  - Extracts duration, title, description, and other video metadata
-
-### 2. Audio Processing Services
-
-**Key Components:**
-- `DownloaderService`: Downloads audio content
-  - Uses yt-dlp for efficient YouTube downloads
-  - Handles audio format configuration
-  - Manages file naming and storage
-
-### 3. Episode Analysis Service
-
-**Key Components:**
-- `EpisodeAnalyzerService`: Analyzes episodes based on metadata
-  - Duration-based filtering to separate full episodes from shorts
-  - ISO 8601 duration parsing for accurate duration comparison
-  - Detailed episode information and statistics
-
-### 4. Transcription Services
-
-**Key Components:**
-- `TranscriptionService`: Core transcription functionality
-  - Speaker diarization to identify different speakers
-  - Timestamp generation for utterances
-  - Transcript metadata enrichment with episode information
-- `DeepgramTranscriptionService`: Implementation using Deepgram API
-  - Utilizes Deepgram Nova-3 model for improved accuracy
-  - Configurable transcription parameters
-  - Updates episode objects with transcript information
-- `BatchTranscriberService`: Manages transcription of multiple episodes
-  - Coordinates batch processing of episodes
-  - Generates both JSON and human-readable transcripts
-
-### 5. Orchestration Service
-
-**Key Components:**
-- `PodcastPipelineService`: Orchestrates the entire workflow
-  - Coordinates all other services in sequence
-  - Manages the complete pipeline from download to transcription
-  - Provides unified interface for the entire process
-
-### 7. Speaker Identification Service
-
-**Key Components:**
-- `SpeakerIdentificationService`: Identifies speakers in podcast transcripts
-  - Uses LLM integration for accurate speaker identification
-  - Maps anonymous speaker IDs to actual speaker names
-  - Updates episode metadata with speaker information
-  - Handles both hosts and guests identification
-  - Works with OpenAI or DeepSeek LLM providers
-
-## Data Models
-
-### PodcastEpisode
-
-The central data model representing a podcast episode with fields for both YouTube metadata and transcript information:
-
-```
-PodcastEpisode
-├── video_id: str                     # YouTube video ID
-├── title: str                        # Episode title
-├── description: str                  # Episode description
-├── published_at: datetime            # Publication date
-├── channel_id: str                   # YouTube channel ID
-├── channel_title: str                # Channel name
-├── tags: List[str]                   # Video tags
-├── duration: str                     # ISO 8601 duration from YouTube
-├── view_count: int                   # View count
-├── like_count: int                   # Like count
-├── comment_count: int                # Comment count
-├── thumbnail_url: str                # Thumbnail URL
-├── audio_filename: str               # Path to audio file
-├── transcript_filename: str          # Path to transcript file
-├── transcript_duration: float        # Duration of transcript in seconds
-├── transcript_utterances: int        # Number of utterances in transcript
-├── speaker_count: int                # Number of speakers
-└── metadata: Dict                    # Additional metadata
-    ├── type: str                     # FULL or SHORT
-    ├── duration_seconds: int         # Duration in seconds
-    └── coverage_percentage: float    # Transcript coverage
-```
-
-## Repository Layer
-
-**Key Components:**
-- `EpisodeRepository`: Data access for episodes
-  - JSON-based storage for all episode data
-  - CRUD operations for episode management
-  - Ensures data persistence between pipeline stages
-
-## Command-Line Interface
-
-The system provides a single entry point for all operations:
-
-1. **Unified Command Interface**:
-   - `pipeline.py`: Single script for all operations
-     - `pipeline`: Process episodes through the pipeline
-     - `display`: View formatted transcripts
-     - `verify`: Check transcript metadata and statistics
-
-## System Architecture Diagram
-
-```
-┌─────────────────┐    ┌─────────────────┐    ┌────────────────────┐
-│                 │    │                 │    │                    │
-│  YouTube API    │───►│ Audio Download  │───►│ Deepgram API       │
-│                 │    │                 │    │                    │
-└─────────────────┘    └─────────────────┘    └──────────┬─────────┘
-        │                                                 │
-        │                                                 │
-        ▼                                                 ▼
-┌─────────────────┐    ┌─────────────────┐    ┌────────────────────┐
-│                 │    │                 │    │                    │
-│ Episode Model   │◄───┤ Repository      │◄───┤ Transcript Model   │
-│                 │    │                 │    │                    │
-└─────────────────┘    └──────┬──────────┘    └────────────────────┘
-                              │
-                              │
-                      ┌───────▼────────┐
-                      │                │
-                      │ Command-Line   │
-                      │ Interface      │
-                      │                │
-                      └────────────────┘
-```
-
-## Known Issues and Improvements
-
-### YouTube Metadata and Transcript Integration
-
-There was a concern that YouTube information metadata was not getting updated properly from transcript information. The investigation reveals:
-
-1. **Current Behavior**:
-   - In `transcription_service.py`, the `transcribe_episode` method correctly updates:
-     - `episode.transcript_filename`
-     - `episode.transcript_duration`
-     - `episode.transcript_utterances`
-   
-   - These updates are temporary unless explicitly saved back to the repository
-
-2. **Issue**:
-   - In `batch_transcriber.py`, the episode objects are correctly updated with transcript information
-   - However, in some cases, `self.repository.update_episode(episode)` might not be called or is failing
-
-3. **Solution**:
-   - Ensure all episode updates are properly persisted to the repository
-   - Verify that `PodcastPipelineService.transcribe_audio` properly reloads episodes after transcription
-   - Add explicit repository update calls after critical operations
-
-## Future Enhancements
-
-- **Improved Metadata Integration**: Better synchronization between YouTube and transcript data
-- **Speaker Recognition**: Advanced speaker identification using voice signatures
-- **Content Analysis**: Natural language processing for topic extraction and summarization
-- **Web Interface**: User-friendly interface for browsing and searching transcripts
-
-## Speaker Identification System
-
-The Speaker Identification System is designed to automatically identify and map anonymous speakers in podcast transcripts to their actual names. This is a critical component for making the transcript content searchable and analyzable by speaker.
-
-### Speaker Identification Strategies
-
-The system employs multiple complementary strategies to achieve accurate speaker identification:
-
-1. **LLM-Based Identification (New)**
-   - Uses Large Language Models (OpenAI or DeepSeq) to analyze episode metadata and transcript
-   - Extracts hosts and guests with confidence scores
-   - Provides highly accurate identification from contextual understanding
-   - Configurable through CLI and pipeline service parameters
-
-2. **Metadata-Based Identification**
-   - Extracts potential guest names from episode titles and descriptions
-   - Uses patterns like "with Guest Name" or "featuring Guest Name"
-   - Filters out known hosts to identify unique guests
-
-3. **Self-Introduction Detection**
-   - Identifies speakers introducing themselves with patterns like "I'm [name]" or "This is [name]"
-   - Analyzes intro sections where hosts and guests typically introduce themselves
-   - Assigns high confidence scores to these identifications
-
-4. **Direct Address Analysis**
-   - Detects when one speaker directly addresses another by name
-   - Analyzes response patterns to map speaker IDs to names
-   - Uses frequency analysis to determine the most likely mapping
-
-5. **Speaking Pattern Recognition**
-   - Analyzes linguistic patterns unique to specific speakers
-   - Identifies characteristic filler words and phrases
-   - Measures utterance length and speaking style indicators
-
-6. **Name Mention Analysis**
-   - Observes how speakers refer to others vs. themselves
-   - Uses the insight that people rarely refer to themselves by name
-   - Maps speakers who are frequently mentioned but don't mention themselves
-
-7. **Intro/Outro Context**
-   - Examines podcast introductions and conclusions
-   - Uses the structural patterns of podcast episodes
-   - Identifies hosts who typically begin or end episodes
-
-8. **Cross-Episode Learning**
-   - Maintains speaker history across episodes
-   - Improves identification accuracy over time
-   - Placeholder for future speaker fingerprinting
-
-### LLM Integration Architecture
-
-The LLM integration follows a modular design with:
-
-1. **LLM Service Layer**
-   - Abstract `LLMProvider` interface for different model implementations
-   - Concrete providers for OpenAI and DeepSeq
-   - Configurable models and parameters
-   - Structured JSON output format for consistent processing
-
-2. **Integration with Existing Pipeline**
-   - Optional LLM usage controlled via configuration
-   - LLM identification runs first when enabled
-   - Results are combined with traditional heuristic methods
-   - Confidence scores determine which identification to trust
-
-3. **CLI Configuration**
-   - Command-line parameters for enabling/configuring LLM
-   - Provider selection (OpenAI/DeepSeq)
-   - Model selection for each provider
-   - Filtering options for reviewing results
-
-### Speaker Metadata Structure
-
-Identified speakers are stored in the episode metadata with rich information:
-
-```json
-"speakers": {
-  "0": {
-    "name": "Jason Calacanis",
-    "utterance_count": 120,
-    "confidence": 0.92,
-    "is_guest": false,
-    "is_unknown": false,
-    "identified_by_llm": true
-  },
-  "1": {
-    "name": "Guest Name",
-    "utterance_count": 85,
-    "confidence": 0.78,
-    "is_guest": true,
-    "is_unknown": false,
-    "identified_by_llm": true
-  },
-  "2": {
-    "name": "Unknown Speaker 2",
-    "utterance_count": 5,
-    "confidence": 0.1,
-    "is_guest": false,
-    "is_unknown": true,
-    "identified_by_llm": false
-  }
-}
-```
-
-### Confidence Scoring
-
-The system assigns confidence scores to each identification:
-
-- Each identification strategy contributes to the overall confidence score
-- Higher confidence is given to more reliable methods (LLM, self-introductions, direct address)
-- Identifications below threshold confidence are marked as "Unknown Speaker"
-- Guest speakers are explicitly flagged in the metadata
-
-### Implementation Details
-
-The speaker identification process follows these steps:
-
-1. Extract all unique speaker IDs from the transcript
-2. If enabled, use LLM to identify speakers from episode metadata and transcript sample
-3. Apply traditional identification strategies in sequence, from most to least reliable
-4. Combine evidence from all strategies with weighted confidence scores
-5. For remaining unidentified speakers, apply heuristic defaults based on podcast format
-6. Update episode metadata with detailed speaker information including confidence scores
-
-### Future Enhancements
-
-Planned improvements to the speaker identification system:
-
-1. **Speaker Embedding/Voice Fingerprinting**
-   - Create voice fingerprints for known speakers
-   - Train models to recognize speakers across episodes
-   - Leverage audio characteristics for more accurate identification
-
-2. **Enhanced NLP Analysis**
-   - Use more sophisticated NLP for entity recognition in transcripts
-   - Analyze topic expertise patterns to match with known speakers
-   - Implement advanced contextual analysis
-
-3. **External Knowledge Integration**
-   - Connect with podcast websites and APIs for guest information
-   - Build a growing database of speaker profiles
-   - Integrate with public figure databases
-
-4. **Interactive Feedback Loop**
-   - Allow manual corrections to improve future identifications
-   - Implement active learning from user feedback
-   - Build a continuously improving identification system
-
-## Overall System Architecture
-
-The AllInVault system follows SOLID principles throughout its architecture:
-
-1. **Single Responsibility Principle**: Each component has a well-defined responsibility
-   - Speaker identification service focuses solely on mapping speakers
-   - Episode repository handles persistence
-   - Transcript processing handles text formatting
-
-2. **Open/Closed Principle**: Components are open for extension
-   - New speaker identification strategies can be added without modifying existing code
-   - The confidence scoring system allows for additional evidence sources
-
-3. **Liskov Substitution Principle**: Services use clear interfaces
-   - Alternative identification strategies can be substituted
-   - Different transcript formats can be processed with the same interface
-
-4. **Interface Segregation**: APIs are focused and specific
-   - Speaker identification doesn't depend on unrelated episode features
-   - Clear separation between transcript analysis and metadata handling
-
-5. **Dependency Inversion**: High-level modules depend on abstractions
-   - Processing pipeline depends on abstract interfaces
-   - Services can be swapped with alternative implementations
-
-The system follows a modular architecture with services, repositories, and models clearly separated to maintain clean architecture principles 
+Below is a detailed mermaid diagram showing the specific implementation of the pipeline architecture, including all services, stages, and their interactions:
 
 ```mermaid
 graph TD
-    A[YouTube Data API] -->|Downloads Episode Metadata| B[Podcast Pipeline Service]
-    B -->|Analyzes Episodes| C[Episode Analyzer Service]
-    C -->|Identifies Full Episodes| B
-    B -->|Downloads Audio| D[Downloader Service]
-    D -->|Saves MP3| E[Audio Files]
-    B -->|Transcribes Audio| F[Batch Transcriber Service]
-    F -->|Creates JSON Transcripts| G[Transcript Files]
-    B -->|Identifies Speakers| H[Speaker Identification Service]
-    H -->|Uses LLM| I[LLM Service]
-    I -->|OpenAI Integration| J[OpenAI API]
-    B -->|Updates Metadata| K[Episode Repository]
-    K -->|Stores| L[episodes.json]
-``` 
+    %% Command Line Interface
+    CLI[Command Line Interface<br>pipeline_cmd.py]
+    CONFIG[Configuration System<br>config.py]
+    
+    %% Pipeline Orchestrator
+    ORCH[Pipeline Orchestrator]
+    
+    %% Pipeline Stages
+    FETCH[FetchMetadataStage]
+    ANALYZE[AnalyzeEpisodesStage]
+    DOWNLOAD[DownloadAudioStage]
+    TRANSCRIBE[TranscribeAudioStage]
+    IDENTIFY[IdentifySpeakersStage]
+    
+    %% Services
+    YT_SVC[YouTube Service]
+    ANALYZER[Episode Analyzer Service]
+    DOWNLOADER[YtDlp Downloader]
+    BATCH_TRANS[Batch Transcriber Service]
+    DEEPGRAM[Deepgram Transcription Service]
+    SPEAKER_SVC[Speaker Identification Service]
+    LLM_SVC[LLM Service]
+    
+    %% Repository
+    REPO[JSON File Repository]
+    
+    %% Data Storage
+    META_DB[Episodes JSON Database]
+    AUDIO_DIR[Audio Files Directory]
+    TRANS_DIR[Transcripts Directory]
+    
+    %% External Services
+    YT_API[YouTube API]
+    DEEPGRAM_API[Deepgram API]
+    OPENAI_API[OpenAI API]
+    
+    %% Flow between components
+    CLI -- "executes pipeline/stages" --> ORCH
+    CLI -- "loads config" --> CONFIG
+    ORCH -- "uses" --> CONFIG
+    
+    %% Orchestrator to Stages
+    ORCH -- "executes" --> FETCH
+    ORCH -- "executes" --> ANALYZE
+    ORCH -- "executes" --> DOWNLOAD
+    ORCH -- "executes" --> TRANSCRIBE
+    ORCH -- "executes" --> IDENTIFY
+    
+    %% Stage Dependencies
+    FETCH -.-> ANALYZE
+    ANALYZE -.-> DOWNLOAD
+    DOWNLOAD -.-> TRANSCRIBE
+    TRANSCRIBE -.-> IDENTIFY
+    
+    %% Stages to Services
+    FETCH -- "uses" --> YT_SVC
+    ANALYZE -- "uses" --> ANALYZER
+    DOWNLOAD -- "uses" --> DOWNLOADER
+    TRANSCRIBE -- "uses" --> BATCH_TRANS
+    IDENTIFY -- "uses" --> SPEAKER_SVC
+    
+    %% Service Relationships
+    BATCH_TRANS -- "uses" --> DEEPGRAM
+    SPEAKER_SVC -- "uses" --> LLM_SVC
+    
+    %% External API Connections
+    YT_SVC -- "calls" --> YT_API
+    DEEPGRAM -- "calls" --> DEEPGRAM_API
+    LLM_SVC -- "calls" --> OPENAI_API
+    
+    %% Repository Access
+    FETCH -- "updates" --> REPO
+    ANALYZE -- "updates" --> REPO
+    DOWNLOAD -- "updates" --> REPO
+    TRANSCRIBE -- "updates" --> REPO
+    IDENTIFY -- "updates" --> REPO
+    
+    %% Data Storage
+    REPO -- "reads/writes" --> META_DB
+    DOWNLOADER -- "creates" --> AUDIO_DIR
+    BATCH_TRANS -- "creates" --> TRANS_DIR
+    
+    %% Data Flows
+    YT_API -- "episode metadata" --> YT_SVC
+    YT_SVC -- "PodcastEpisode objects" --> FETCH
+    ANALYZER -- "categorizes episodes" --> ANALYZE
+    DOWNLOADER -- "downloads audio files" --> DOWNLOAD
+    DEEPGRAM -- "generates transcripts" --> BATCH_TRANS
+    BATCH_TRANS -- "adds transcript data" --> TRANSCRIBE
+    SPEAKER_SVC -- "identifies speakers" --> IDENTIFY
+    OPENAI_API -- "speaker analysis" --> LLM_SVC
+    
+    %% Stage Process Flows
+    subgraph "Pipeline Data Flow"
+        direction LR
+        META[Episode Metadata] --> TYPE[Episode Type<br>(Full/Short)]
+        TYPE --> AUDIO[Audio Files]
+        AUDIO --> TRANSCRIPT[Transcripts]
+        TRANSCRIPT --> SPEAKERS[Identified Speakers]
+    end
+    
+    %% Styling
+    classDef cli fill:#f9d,stroke:#333,stroke-width:2px
+    classDef orchestrator fill:#bbf,stroke:#333,stroke-width:2px
+    classDef stage fill:#bfb,stroke:#333,stroke-width:2px
+    classDef service fill:#fdb,stroke:#333,stroke-width:2px
+    classDef repo fill:#ddf,stroke:#333,stroke-width:2px
+    classDef storage fill:#dfd,stroke:#333,stroke-width:2px
+    classDef external fill:#faa,stroke:#333,stroke-width:2px
+    
+    class CLI cli
+    class ORCH orchestrator
+    class FETCH,ANALYZE,DOWNLOAD,TRANSCRIBE,IDENTIFY stage
+    class YT_SVC,ANALYZER,DOWNLOADER,BATCH_TRANS,DEEPGRAM,SPEAKER_SVC,LLM_SVC service
+    class REPO repo
+    class META_DB,AUDIO_DIR,TRANS_DIR storage
+    class YT_API,DEEPGRAM_API,OPENAI_API external
+```
+
+This diagram shows:
+
+1. **Command-Line Interface**: The entry point for user interactions.
+2. **Pipeline Orchestrator**: Coordinates the execution of stages.
+3. **Pipeline Stages**: The five main processing stages.
+4. **Service Layer**: Specialized services for each processing task.
+5. **Repository Layer**: Data access abstraction.
+6. **External Services**: Third-party APIs the system interacts with.
+7. **Data Storage**: Where different types of data are persisted.
+8. **Data Flow**: How information flows through the pipeline.
+
+The dependencies between stages are shown with dotted lines, while the solid lines represent active method calls or data flow. The diagram also illustrates the progression of the podcast data from raw metadata to fully processed transcripts with identified speakers.
