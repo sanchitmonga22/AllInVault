@@ -321,18 +321,18 @@ class TranscribeAudioStage(AbstractStage):
     
     def execute(self, episode_ids: Optional[List[str]] = None, **kwargs) -> StageResult:
         """
-        Transcribe audio for episodes.
+        Transcribe audio files.
         
         Args:
-            episode_ids: List of video IDs to transcribe, or None for all episodes with audio
+            episode_ids: List of video IDs to process, or None for all episodes with audio
             **kwargs:
                 audio_dir: Directory containing audio files
-                transcripts_dir: Directory to save transcripts
+                transcripts_dir: Directory to store transcriptions
                 model: Deepgram model to use
-                detect_language: Whether to auto-detect language
-                smart_format: Whether to apply smart formatting
-                utterances: Whether to generate utterance-level transcripts
-                diarize: Whether to perform speaker diarization
+                detect_language: Whether to detect language
+                smart_format: Whether to use smart formatting
+                utterances: Whether to include utterances
+                diarize: Whether to diarize the audio
                 
         Returns:
             StageResult containing the updated episode objects
@@ -341,11 +341,10 @@ class TranscribeAudioStage(AbstractStage):
             audio_dir = kwargs.get('audio_dir', str(self.config.audio_dir))
             transcripts_dir = kwargs.get('transcripts_dir', str(self.config.transcripts_dir))
             
-            # Get episodes to transcribe
+            # Determine episodes to transcribe
+            episodes_to_transcribe = []
             if episode_ids and len(episode_ids) > 0:
                 logger.info(f"Transcribing specific episodes: {episode_ids}")
-                # Only transcribe specified episodes that have audio files
-                episodes_to_transcribe = []
                 for video_id in episode_ids:
                     episode = self.repository.get_episode(video_id)
                     if episode and episode.audio_filename:
@@ -371,16 +370,11 @@ class TranscribeAudioStage(AbstractStage):
             utterances = kwargs.get('utterances', True)
             diarize = kwargs.get('diarize', True)
             
-            # Transcribe episodes
+            # Transcribe episodes - only pass parameters that the method accepts
             self.batch_transcriber.transcribe_episodes(
                 episodes_to_transcribe,
                 audio_dir=audio_dir,
-                transcripts_dir=transcripts_dir,
-                model=model,
-                detect_language=detect_language,
-                smart_format=smart_format,
-                utterances=utterances,
-                diarize=diarize
+                transcripts_dir=transcripts_dir
             )
             
             # Generate readable text transcripts
@@ -460,10 +454,9 @@ class IdentifySpeakersStage(AbstractStage):
             logger.info(f"Identifying speakers for {len(episodes_to_process)} episodes")
             
             # Identify speakers
-            updated_episodes = speaker_service.identify_speakers_in_episodes(
+            updated_episodes = speaker_service.process_episodes(
                 episodes_to_process,
-                transcripts_dir=transcripts_dir,
-                force_reidentify=force_reidentify
+                transcripts_dir=transcripts_dir
             )
             
             logger.info(f"Speaker identification complete for {len(updated_episodes)} episodes")
