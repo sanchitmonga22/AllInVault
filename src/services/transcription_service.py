@@ -10,6 +10,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 import datetime
+import re
 
 from deepgram import Deepgram
 from tqdm import tqdm
@@ -76,7 +77,7 @@ class TranscriptionServiceInterface(ABC):
 class DeepgramTranscriptionService(TranscriptionServiceInterface):
     """Transcription service using Deepgram API."""
     
-    def __init__(self, api_key: str, language: str = "en-US", model: str = "nova", demo_mode: bool = False, max_speakers: int = 6):
+    def __init__(self, api_key: str, language: str = "en-US", model: str = "nova", max_speakers: int = 6):
         """
         Initialize the DeepgramTranscriptionService.
         
@@ -84,13 +85,11 @@ class DeepgramTranscriptionService(TranscriptionServiceInterface):
             api_key: Deepgram API key
             language: Language code for transcription
             model: Deepgram model to use
-            demo_mode: If True, use sample transcript data for demonstration
             max_speakers: Maximum number of potential speakers to account for (default: 6)
         """
         self.deepgram = Deepgram(api_key) if api_key else None
         self.language = language
         self.model = model
-        self.demo_mode = demo_mode
         self.max_speakers = max_speakers
     
     def _extract_speaker_metadata(self, transcript_data: Dict) -> List[Dict[str, Any]]:
@@ -144,24 +143,17 @@ class DeepgramTranscriptionService(TranscriptionServiceInterface):
             is_host = False
             host_name = None
             
-            # For the demo mode, directly map to host names
-            if self.demo_mode and i < 4:
-                host_names = ["Chamath", "Jason", "Sacks", "Friedberg"]
-                host_name = host_names[i]
-                is_host = True
-            else:
-                # For real transcription, check text for mentions of host names
-                # This is a simple heuristic and might not be 100% accurate
-                text = stats['text'].lower()
-                for host_key, host_data in DEFAULT_HOSTS.items():
-                    if host_key in text or host_data['full_name'].lower() in text:
-                        host_name = host_data['full_name']
-                        is_host = True
-                        break
-                    if 'alt_name' in host_data and host_data['alt_name'].lower() in text:
-                        host_name = host_data['full_name']
-                        is_host = True
-                        break
+            # For real transcription, check text for mentions of host names
+            text = stats['text'].lower()
+            for host_key, host_data in DEFAULT_HOSTS.items():
+                if host_key in text or host_data['full_name'].lower() in text:
+                    host_name = host_data['full_name']
+                    is_host = True
+                    break
+                if 'alt_name' in host_data and host_data['alt_name'].lower() in text:
+                    host_name = host_data['full_name']
+                    is_host = True
+                    break
             
             # Default naming if no host identified
             if not host_name:
@@ -185,127 +177,89 @@ class DeepgramTranscriptionService(TranscriptionServiceInterface):
         
         return speakers
     
-    def _generate_demo_transcript(self, episode: PodcastEpisode) -> Dict:
+    def verify_transcript_completeness(self, transcript_data: Dict, episode_duration: Optional[int] = None) -> Dict[str, Any]:
         """
-        Generate a sample transcript for demonstration purposes.
+        Verify whether a transcript appears to be complete.
         
         Args:
-            episode: PodcastEpisode to generate transcript for
+            transcript_data: The transcript data to verify
+            episode_duration: Optional duration in seconds from the episode metadata
             
         Returns:
-            Dictionary with sample transcription data
-        """
-        # Create a sample transcript structure similar to Deepgram's response
-        current_time = datetime.datetime.now().isoformat()
-        speaker_names = ["Chamath", "Jason", "Sacks", "Friedberg"]
-        
-        # For demo purposes, randomly decide if we should include a guest
-        include_guest = len(episode.title) % 3 == 0  # Pseudo-random condition
-        
-        if include_guest:
-            # Add a demo guest speaker
-            speaker_names.append("Guest")
-        
-        words = []
-        paragraphs = []
-        utterances = []
-        
-        # Generate sample utterances
-        num_utterances = 5 + (1 if include_guest else 0)
-        for i in range(num_utterances):
-            start_time = i * 60.0
-            end_time = start_time + 45.0
-            speaker_idx = i % len(speaker_names)
-            speaker = speaker_names[speaker_idx]
-            
-            # Sample text based on episode title
-            if speaker == "Guest":
-                text = f"Thanks for having me on the show to discuss {episode.title}. " \
-                       f"This is a guest speaker sharing insights about this topic. " \
-                       f"I'm happy to join the All In Podcast crew for this conversation."
-            else:
-                text = f"This is a sample transcript for the episode: {episode.title}. " \
-                       f"This is {speaker} speaking about the All In Podcast. " \
-                       f"This is utterance number {i+1} in our demonstration transcript."
-            
-            # Add words with timestamps
-            word_list = text.split()
-            word_duration = (end_time - start_time) / len(word_list)
-            
-            for j, word in enumerate(word_list):
-                word_start = start_time + (j * word_duration)
-                word_end = word_start + word_duration
-                words.append({
-                    "word": word,
-                    "start": word_start,
-                    "end": word_end,
-                    "confidence": 0.95,
-                    "speaker": speaker_idx
-                })
-            
-            # Add utterance
-            utterances.append({
-                "start": start_time,
-                "end": end_time,
-                "confidence": 0.95,
-                "speaker": speaker_idx,
-                "text": text
-            })
-            
-            # Add paragraph
-            paragraphs.append({
-                "start": start_time,
-                "end": end_time,
-                "speaker": speaker_idx,
-                "text": text
-            })
-        
-        return {
-            "metadata": {
-                "transaction_key": f"demo-{episode.video_id}",
-                "request_id": f"demo-request-{episode.video_id}",
-                "sha256": f"demo-sha-{episode.video_id}",
-                "created": current_time,
-                "duration": 300.0,
-                "channels": 1
-            },
-            "results": {
-                "channels": [
-                    {
-                        "alternatives": [
-                            {
-                                "transcript": " ".join([u["text"] for u in utterances]),
-                                "confidence": 0.95,
-                                "words": words
-                            }
-                        ]
-                    }
-                ],
-                "utterances": utterances,
-                "paragraphs": paragraphs,
-                "duration": 300.0
+            Dictionary with verification results:
+            {
+                "is_complete": bool,
+                "coverage_percent": float,
+                "reason": str
             }
+        """
+        result = {
+            "is_complete": False,
+            "coverage_percent": 0.0,
+            "reason": ""
         }
+        
+        # Check transcript duration vs episode duration
+        if "results" in transcript_data and "duration" in transcript_data["results"]:
+            transcript_duration = transcript_data["results"]["duration"]
+            
+            if episode_duration:
+                # Convert ISO 8601 duration to seconds if needed
+                if isinstance(episode_duration, str):
+                    match = re.match(r'PT(\d+)H(\d+)M(\d+)S', episode_duration)
+                    if match:
+                        hours, minutes, seconds = map(int, match.groups())
+                        episode_seconds = hours * 3600 + minutes * 60 + seconds
+                    else:
+                        # Try simpler format PT(\d+)M(\d+)S
+                        match = re.match(r'PT(\d+)M(\d+)S', episode_duration)
+                        if match:
+                            minutes, seconds = map(int, match.groups())
+                            episode_seconds = minutes * 60 + seconds
+                        else:
+                            # Try even simpler format PT(\d+)S
+                            match = re.match(r'PT(\d+)S', episode_duration)
+                            if match:
+                                episode_seconds = int(match.groups()[0])
+                            else:
+                                episode_seconds = episode_duration
+                else:
+                    episode_seconds = episode_duration
+                
+                # Calculate coverage
+                coverage = min(100.0, (transcript_duration / episode_seconds) * 100)
+                result["coverage_percent"] = coverage
+                
+                if coverage < 90:
+                    result["reason"] = f"Transcript only covers {coverage:.1f}% of episode duration"
+                    return result
+            
+            # Even without episode_duration, check if transcript is suspiciously short
+            if transcript_duration < 300:  # Less than 5 minutes
+                result["reason"] = f"Transcript duration ({transcript_duration}s) is suspiciously short"
+                return result
+        
+        # Check number of utterances
+        if "results" in transcript_data and "utterances" in transcript_data["results"]:
+            utterances = transcript_data["results"]["utterances"]
+            if len(utterances) < 10:  # Arbitrary minimum for a real episode
+                result["reason"] = f"Too few utterances ({len(utterances)}) for a complete transcript"
+                return result
+        
+        # If no issues found, consider it complete
+        result["is_complete"] = True
+        return result
     
-    def transcribe_audio(self, audio_path: str, episode: Optional[PodcastEpisode] = None) -> Dict:
+    def transcribe_audio(self, audio_path: str) -> Dict:
         """
         Transcribe an audio file using Deepgram API.
         
         Args:
             audio_path: Path to the audio file
-            episode: Optional PodcastEpisode for demo mode
             
         Returns:
             Dictionary with transcription data
         """
-        # If in demo mode, return sample transcript data
-        if self.demo_mode:
-            if not episode:
-                raise ValueError("Episode required for demo mode transcription")
-            
-            print(f"Using demo mode to generate a sample transcript")
-            return self._generate_demo_transcript(episode)
-        
         # Regular operation using Deepgram API
         with open(audio_path, 'rb') as audio:
             source = {'buffer': audio, 'mimetype': 'audio/mp3'}
@@ -351,16 +305,30 @@ class DeepgramTranscriptionService(TranscriptionServiceInterface):
         # Create transcripts directory if it doesn't exist
         Path(transcripts_dir).mkdir(parents=True, exist_ok=True)
         
-        # Skip if transcript already exists
+        # Check if transcript already exists
+        transcript_data = None
         if os.path.exists(transcript_path):
             print(f"Transcript already exists for {episode.title}")
             with open(transcript_path, 'r') as f:
                 transcript_data = json.load(f)
-        else:
+            
+            # Verify if the existing transcript is complete
+            verification = self.verify_transcript_completeness(transcript_data, episode.duration)
+            
+            # If not complete, we might want to regenerate it
+            if not verification["is_complete"]:
+                print(f"WARNING: {episode.title} has an incomplete transcript: {verification['reason']}")
+                print(f"Coverage: {verification['coverage_percent']:.1f}%")
+                
+                # Optionally, add logic here to force regeneration if coverage is too low
+                # For now, we'll just warn the user
+        
+        # Transcribe if we don't have data yet
+        if transcript_data is None:
             # Transcribe the audio
             print(f"Transcribing {episode.title}...")
             try:
-                transcript_data = self.transcribe_audio(audio_path, episode)
+                transcript_data = self.transcribe_audio(audio_path)
                 
                 # Extract speaker metadata and add to transcript
                 speakers = self._extract_speaker_metadata(transcript_data)
@@ -370,32 +338,25 @@ class DeepgramTranscriptionService(TranscriptionServiceInterface):
                         transcript_data['metadata'] = {}
                     transcript_data['metadata']['speakers'] = speakers
                 
+                # Add episode information to transcript metadata
+                if 'metadata' not in transcript_data:
+                    transcript_data['metadata'] = {}
+                
+                transcript_data['metadata']['episode_info'] = {
+                    'video_id': episode.video_id,
+                    'title': episode.title,
+                    'duration': episode.duration,
+                    'duration_seconds': self._duration_to_seconds(episode.duration),
+                    'published_at': episode.published_at.isoformat()
+                }
+                
                 # Save the transcript to file
                 with open(transcript_path, 'w') as f:
                     json.dump(transcript_data, f, indent=2)
             except Exception as e:
                 print(f"Error transcribing {episode.title}: {e}")
-                if not self.demo_mode:
-                    print("Falling back to demo mode for this episode")
-                    self.demo_mode = True
-                    transcript_data = self.transcribe_audio(audio_path, episode)
-                    
-                    # Add speaker mapping for demo transcripts too
-                    speakers = self._extract_speaker_metadata(transcript_data)
-                    if speakers:
-                        if 'metadata' not in transcript_data:
-                            transcript_data['metadata'] = {}
-                        transcript_data['metadata']['speakers'] = speakers
-                    
-                    # Save the transcript to file
-                    with open(transcript_path, 'w') as f:
-                        json.dump(transcript_data, f, indent=2)
-                    
-                    # Reset demo mode to its original setting
-                    self.demo_mode = False
-                else:
-                    # Re-raise if already in demo mode
-                    raise
+                # Just re-raise the exception - no fallback to demo mode
+                raise
         
         # Update the episode with transcript information
         episode.transcript_filename = transcript_filename
@@ -413,8 +374,64 @@ class DeepgramTranscriptionService(TranscriptionServiceInterface):
             # Extract detected speaker count 
             if 'metadata' in transcript_data and 'speakers' in transcript_data['metadata']:
                 episode.speaker_count = len(transcript_data['metadata']['speakers'])
+            
+            # Verify and store transcript completeness
+            verification = self.verify_transcript_completeness(transcript_data, episode.duration)
+            if 'metadata' not in episode.metadata:
+                episode.metadata['transcript'] = {}
+            
+            episode.metadata['transcript'] = {
+                'is_complete': verification['is_complete'],
+                'coverage_percent': verification['coverage_percent'],
+                'reason': verification['reason']
+            }
         
         return episode
+    
+    def _duration_to_seconds(self, duration_str: str) -> int:
+        """
+        Convert ISO 8601 duration string to seconds.
+        
+        Args:
+            duration_str: Duration string in ISO 8601 format (e.g., PT1H28M)
+            
+        Returns:
+            Duration in seconds
+        """
+        if not duration_str:
+            return 0
+            
+        # Try format PT(\d+)H(\d+)M(\d+)S
+        match = re.match(r'PT(\d+)H(\d+)M(\d+)S', duration_str)
+        if match:
+            hours, minutes, seconds = map(int, match.groups())
+            return hours * 3600 + minutes * 60 + seconds
+        
+        # Try format PT(\d+)H(\d+)M
+        match = re.match(r'PT(\d+)H(\d+)M', duration_str)
+        if match:
+            hours, minutes = map(int, match.groups())
+            return hours * 3600 + minutes * 60
+        
+        # Try format PT(\d+)M(\d+)S
+        match = re.match(r'PT(\d+)M(\d+)S', duration_str)
+        if match:
+            minutes, seconds = map(int, match.groups())
+            return minutes * 60 + seconds
+            
+        # Try format PT(\d+)M
+        match = re.match(r'PT(\d+)M', duration_str)
+        if match:
+            minutes = int(match.groups()[0])
+            return minutes * 60
+            
+        # Try format PT(\d+)S
+        match = re.match(r'PT(\d+)S', duration_str)
+        if match:
+            return int(match.groups()[0])
+            
+        # If all else fails, return 0
+        return 0
     
     def transcribe_episodes(self, episodes: List[PodcastEpisode], audio_dir: str, transcripts_dir: str) -> List[PodcastEpisode]:
         """

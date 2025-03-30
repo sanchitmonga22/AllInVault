@@ -40,8 +40,7 @@ class PodcastPipelineService:
     def __init__(
         self,
         config: Optional[AppConfig] = None,
-        min_duration_seconds: int = 120,
-        use_demo_mode: bool = False
+        min_duration_seconds: int = 120
     ):
         """
         Initialize the podcast pipeline service.
@@ -49,11 +48,9 @@ class PodcastPipelineService:
         Args:
             config: Application configuration
             min_duration_seconds: Minimum duration for a full episode (in seconds)
-            use_demo_mode: Whether to use demo mode for transcription
         """
         self.config = config or load_config()
         self.min_duration_seconds = min_duration_seconds
-        self.use_demo_mode = use_demo_mode
         
         # Initialize services
         self.youtube_service = YouTubeService(self.config.youtube_api_key)
@@ -63,8 +60,7 @@ class PodcastPipelineService:
         )
         self.analyzer = EpisodeAnalyzerService(min_duration=self.min_duration_seconds)
         self.batch_transcriber = BatchTranscriberService(
-            min_duration=self.min_duration_seconds,
-            use_demo_mode=self.use_demo_mode
+            min_duration=self.min_duration_seconds
         )
         
         # Initialize repository
@@ -191,60 +187,70 @@ class PodcastPipelineService:
         
         logger.info(f"Transcribing {len(episodes)} episodes")
         
-        # Indicate if running in demo mode
-        if self.use_demo_mode:
-            logger.info("Running in DEMO MODE: Will generate sample transcripts without real audio processing")
-        
         # Use the batch transcriber service to handle transcription
         episode_ids = [ep.video_id for ep in episodes]
         self.batch_transcriber.transcribe_episodes(episode_ids)
+        
+        # Generate readable text transcripts
         self.batch_transcriber.generate_readable_transcripts(episode_ids)
         
-        # Get the updated episodes from the repository
-        updated_episodes = [self.repository.get_episode(ep_id) for ep_id in episode_ids]
+        # Reload episodes to get updated transcript information
+        updated_episodes = []
+        for ep_id in episode_ids:
+            updated_ep = self.repository.get_episode(ep_id)
+            if updated_ep:
+                updated_episodes.append(updated_ep)
         
         logger.info("Transcription complete")
         
-        return [ep for ep in updated_episodes if ep]
+        return updated_episodes
     
     def run_pipeline(self, num_episodes: int = 5, download_audio: bool = True, transcribe: bool = True) -> None:
         """
-        Run the entire podcast pipeline.
+        Run the full podcast processing pipeline.
         
         Args:
-            num_episodes: Number of episodes to process
+            num_episodes: Maximum number of episodes to process
             download_audio: Whether to download audio files
             transcribe: Whether to transcribe audio files
         """
         logger.info(f"Starting podcast pipeline with {num_episodes} episodes")
         
-        # 1. Fetch episodes metadata
-        episodes = self.fetch_episodes(limit=num_episodes)
+        # Step 1: Fetch episode metadata
+        self.fetch_episodes(num_episodes)
         
-        # 2. Analyze episodes to identify full episodes vs shorts
-        full_episodes, shorts = self.analyze_episodes(limit=num_episodes)
+        # Step 2: Analyze episodes to identify full episodes vs shorts
+        full_episodes, _ = self.analyze_episodes(limit=num_episodes)
         
-        # 3. Download audio for full episodes
+        # Step 3: Download audio for full episodes
         if download_audio:
-            downloaded_episodes = self.download_audio(full_episodes)
+            updated_episodes = self.download_audio(full_episodes)
         else:
             logger.info("Skipping audio download")
-            downloaded_episodes = [self.repository.get_episode(ep['video_id']) for ep in full_episodes]
+            # Get episode objects from repository
+            updated_episodes = []
+            for ep in full_episodes:
+                ep_obj = self.repository.get_episode(ep['video_id'])
+                if ep_obj and ep_obj.audio_filename:
+                    updated_episodes.append(ep_obj)
         
-        # 4. Transcribe downloaded audio
-        if transcribe:
-            if downloaded_episodes:
-                transcribed_episodes = self.transcribe_audio([ep for ep in downloaded_episodes if ep])
-                logger.info(f"Transcribed {len(transcribed_episodes)} episodes")
-            else:
-                logger.warning("No episodes to transcribe")
-        else:
+        # Step 4: Transcribe audio
+        if transcribe and updated_episodes:
+            logger.info(f"Transcribing {len(updated_episodes)} episodes")
+            transcribed_episodes = self.transcribe_audio(updated_episodes)
+            logger.info(f"Transcribed {len(transcribed_episodes)} episodes")
+        elif not transcribe:
             logger.info("Skipping transcription")
+        else:
+            logger.warning("No episodes with audio available for transcription")
         
         logger.info("Pipeline execution complete")
 
+# Command-line interface
+def main():
+    """Run the pipeline as a standalone script."""
+    pipeline = PodcastPipelineService()
+    pipeline.run_pipeline()
 
-# For testing
 if __name__ == "__main__":
-    pipeline = PodcastPipelineService(use_demo_mode=True)
-    pipeline.run_pipeline(num_episodes=3) 
+    main() 

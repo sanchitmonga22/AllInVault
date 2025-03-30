@@ -45,19 +45,12 @@ def main():
         help="Minimum duration in seconds for an episode to be considered a full episode (default: 180)"
     )
     
-    parser.add_argument(
-        "--demo", 
-        action="store_true",
-        help="Use demo mode for transcription (without real audio processing)"
-    )
-    
     args = parser.parse_args()
     
     try:
         # Initialize the pipeline service
         pipeline = PodcastPipelineService(
-            min_duration_seconds=args.min_duration,
-            use_demo_mode=args.demo
+            min_duration_seconds=args.min_duration
         )
         
         # Run the pipeline

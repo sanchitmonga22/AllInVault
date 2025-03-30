@@ -37,7 +37,8 @@ AllInVault/
 │   │   ├── download_podcast_cmd.py  # CLI for podcast download
 │   │   ├── process_podcast_cmd.py   # CLI for full pipeline
 │   │   ├── transcribe_audio_cmd.py  # CLI for audio transcription
-│   │   └── transcribe_full_episodes_cmd.py # CLI for batch transcription
+│   │   ├── transcribe_full_episodes_cmd.py # CLI for batch transcription
+│   │   └── verify_transcripts.py    # CLI for transcript verification 
 │   ├── models/                 # Data models
 │   │   └── podcast_episode.py  # Podcast episode model
 │   ├── repositories/           # Data access layer
@@ -89,7 +90,8 @@ AllInVault/
 - `TranscriptionService`: Core transcription functionality
   - Speaker diarization to identify different speakers
   - Timestamp generation for utterances
-  - Support for demo mode without actual audio processing
+  - Enhanced transcript completeness verification
+  - Transcript metadata enrichment with episode information
 - `BatchTranscriberService`: Manages transcription of multiple episodes
   - Integrates with episode analysis for filtering shorts
   - Processes only applicable episodes
@@ -120,7 +122,8 @@ The system includes multiple command-line interfaces:
    - `download_podcast.py`: Download episode metadata and audio
    - `transcribe_audio.py`: Transcribe audio files
    - `transcribe_full_episodes.py`: Batch transcribe full episodes
-   - `display_transcript.py`: View formatted transcripts
+   - `display_transcript.py`: View formatted transcripts with completeness information
+   - `verify_transcripts.py`: Verify and update transcript completeness information
 
 2. **Unified Pipeline**:
    - `process_podcast.py`: Execute the complete pipeline in one command
@@ -140,6 +143,7 @@ The system includes multiple command-line interfaces:
 5. Batch processing is handled by `BatchTranscriberService`
 6. The entire workflow is orchestrated by `PodcastPipelineService`
 7. All operations update the repository via `EpisodeRepository`
+8. Transcript completeness is verified and episodes are updated with coverage information
 
 ## SOLID Principles Implementation
 
@@ -154,10 +158,72 @@ The system includes multiple command-line interfaces:
 - **YouTube Shorts Detection**: Automatically identifies short-form content
 - **Speaker Diarization**: Detects and labels different speakers
 - **Guest Speaker Recognition**: Identifies and labels guest speakers
-- **Custom Episode Support**: Allows creation of custom episodes for testing
-- **Demo Mode**: Enables testing without actual audio processing
+- **Transcript Completeness Verification**: Analyzes and reports on transcript coverage
+- **Episode Duration Extraction**: Accurately converts YouTube duration formats to seconds
 - **Batch Processing**: Efficient processing of multiple episodes
 - **Unified Pipeline**: Complete workflow automation from a single command
+
+## Transcript Processing System
+
+### Previous Issue
+The transcript processing system had a critical flaw where it was handling demo/sample transcripts without proper labeling. For example, episode "Iazo7g40VbQ" had:
+
+- Episode duration of 1 hour 28 minutes (5280 seconds)
+- A transcript file containing only a 5-minute sample (300 seconds)
+- Only 5 demo utterances instead of the full conversation
+
+### Current Implementation
+
+The system has been redesigned to:
+
+1. **Eliminate Demo Functionality**: 
+   - Removed all demo transcript generation code
+   - System now only works with real transcripts from the API
+   - No more misleading demo/sample transcriptions
+
+2. **Enhanced Completeness Verification**:
+   - Accurate detection of transcript completeness by comparing:
+     - Episode duration (from YouTube API)
+     - Transcript duration (from transcription service)
+   - Calculation of coverage percentage
+   - Clear flagging of incomplete transcripts
+   - Detailed reason for incompleteness
+
+3. **Metadata Enrichment**:
+   - Transcripts now contain episode metadata
+   - Duration information is stored in both ISO 8601 and seconds format
+   - Coverage percentage is stored and displayed
+   - Full publish date and video information is maintained
+
+4. **User Interface Updates**:
+   - Clear display of transcript vs. episode duration
+   - Coverage percentage is prominently shown
+   - Warning indicators for incomplete transcripts
+   - Utterance count and other quality metrics
+
+5. **Verification Tool**:
+   - Added a new `verify_transcripts.py` utility to:
+     - Scan all existing transcripts
+     - Update metadata with episode information
+     - Calculate and store coverage percentages
+     - Generate statistics on transcript completeness
+
+## System Architecture Diagram
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌────────────────────┐
+│                 │    │                 │    │                    │
+│  Video Source   │───►│ Audio Extractor │───►│ Transcript Service │
+│                 │    │                 │    │                    │
+└─────────────────┘    └─────────────────┘    └──────────┬─────────┘
+                                                         │
+                                                         ▼
+┌─────────────────┐    ┌─────────────────┐    ┌────────────────────┐
+│                 │    │                 │    │                    │
+│   Web Frontend  │◄───│  API Gateway   │◄───│ Verification Layer │
+│                 │    │                 │    │                    │
+└─────────────────┘    └─────────────────┘    └────────────────────┘
+```
 
 ## Future Enhancements
 

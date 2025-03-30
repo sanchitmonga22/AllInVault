@@ -14,8 +14,7 @@ class BatchTranscriberService:
     
     def __init__(self, transcription_script_path: str = "transcribe_audio.py", 
                  display_script_path: str = "display_transcript.py",
-                 min_duration: int = 60,
-                 use_demo_mode: bool = False):
+                 min_duration: int = 60):
         """
         Initialize the batch transcriber service.
         
@@ -23,12 +22,10 @@ class BatchTranscriberService:
             transcription_script_path: Path to the transcription script
             display_script_path: Path to the display script for readable output
             min_duration: Minimum duration in seconds for an episode to be transcribed
-            use_demo_mode: Whether to use demo mode for transcription
         """
         self.transcription_script_path = transcription_script_path
         self.display_script_path = display_script_path
         self.min_duration = min_duration
-        self.use_demo_mode = use_demo_mode
         self.analyzer = EpisodeAnalyzerService()
     
     def transcribe_episodes(self, episode_ids: List[str], output_dir: str = "data/transcripts") -> None:
@@ -49,8 +46,7 @@ class BatchTranscriberService:
             print("-"*80)
             
             # Prepare the transcription command
-            demo_flag = "--demo" if self.use_demo_mode else ""
-            cmd = f"python {self.transcription_script_path} --episode {episode_id} {demo_flag} --min-duration {self.min_duration}"
+            cmd = f"python {self.transcription_script_path} --episode {episode_id} --min-duration {self.min_duration}"
             
             # Run the transcription command
             process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -122,7 +118,7 @@ class BatchTranscriberService:
 # Command-line interface
 def main():
     """Run batch transcription as a standalone script."""
-    batch_transcriber = BatchTranscriberService(use_demo_mode=True)
+    batch_transcriber = BatchTranscriberService()
     batch_transcriber.transcribe_full_episodes()
 
 if __name__ == "__main__":

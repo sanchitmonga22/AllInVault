@@ -95,8 +95,7 @@ def main():
         transcription_service = DeepgramTranscriptionService(
             api_key=config.deepgram_api_key if not args.demo else None,
             language=language,
-            model=model,
-            demo_mode=args.demo
+            model=model
         )
         repository = JsonFileRepository(str(config.episodes_db_path))
         
@@ -159,7 +158,7 @@ def main():
         
         # Indicate if running in demo mode
         if args.demo:
-            print("Running in DEMO MODE: Will generate sample transcripts without real audio processing")
+            print("Running without a Deepgram API key: Transcription functionality will be limited")
         
         # Transcribe episodes
         updated_episodes = transcription_service.transcribe_episodes(

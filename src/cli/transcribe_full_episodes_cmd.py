@@ -16,15 +16,12 @@ def main():
                         help='Minimum duration in seconds for an episode to be transcribed (default: 180)')
     parser.add_argument('--json-path', type=str, default='data/json/episodes.json',
                         help='Path to the episodes JSON file (default: data/json/episodes.json)')
-    parser.add_argument('--demo', action='store_true',
-                        help='Use demo mode for transcription (without actual audio processing)')
     
     args = parser.parse_args()
     
     # Initialize the batch transcriber service
     batch_transcriber = BatchTranscriberService(
-        min_duration=args.min_duration,
-        use_demo_mode=args.demo
+        min_duration=args.min_duration
     )
     
     # Transcribe full episodes
