@@ -65,9 +65,30 @@ def main():
         help="Deepgram model to use (default from config)"
     )
     parser.add_argument(
-        "--demo", 
-        action="store_true", 
-        help="Use demo mode to generate sample transcripts without real audio"
+        "--no-smart-format",
+        action="store_true",
+        help="Disable smart formatting"
+    )
+    parser.add_argument(
+        "--no-diarize",
+        action="store_true",
+        help="Disable speaker diarization"
+    )
+    parser.add_argument(
+        "--no-dictation",
+        action="store_true",
+        help="Disable dictation optimization"
+    )
+    parser.add_argument(
+        "--no-punctuate",
+        action="store_true",
+        help="Disable punctuation"
+    )
+    parser.add_argument(
+        "--max-speakers",
+        type=int,
+        default=6,
+        help="Maximum number of speakers to identify (default: 6)"
     )
     parser.add_argument(
         "--min-duration",
@@ -81,10 +102,9 @@ def main():
         # Load configuration
         config = load_config()
         
-        # Check if Deepgram API key is available if not in demo mode
-        if not args.demo and not config.deepgram_api_key:
+        # Check if Deepgram API key is available
+        if not config.deepgram_api_key:
             print("Error: DEEPGRAM_API_KEY not found in environment variables", file=sys.stderr)
-            print("Use --demo flag to run in demo mode without an API key")
             return 1
         
         # Override config with command line arguments if provided
@@ -93,9 +113,14 @@ def main():
         
         # Initialize services and repository
         transcription_service = DeepgramTranscriptionService(
-            api_key=config.deepgram_api_key if not args.demo else None,
+            api_key=config.deepgram_api_key,
             language=language,
-            model=model
+            model=model,
+            max_speakers=args.max_speakers,
+            smart_format=not args.no_smart_format,
+            diarize=not args.no_diarize,
+            dictation=not args.no_dictation,
+            punctuate=not args.no_punctuate
         )
         repository = JsonFileRepository(str(config.episodes_db_path))
         
@@ -155,10 +180,6 @@ def main():
             print(f"Limiting to {args.limit} episodes")
         
         print(f"Ready to transcribe {len(episodes_to_transcribe)} episodes")
-        
-        # Indicate if running in demo mode
-        if args.demo:
-            print("Running without a Deepgram API key: Transcription functionality will be limited")
         
         # Transcribe episodes
         updated_episodes = transcription_service.transcribe_episodes(

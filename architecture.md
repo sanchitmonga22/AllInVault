@@ -92,6 +92,17 @@ AllInVault/
   - Timestamp generation for utterances
   - Enhanced transcript completeness verification
   - Transcript metadata enrichment with episode information
+- `DeepgramTranscriptionService`: Implementation using Deepgram API
+  - Enhanced with latest Deepgram options:
+    - Nova-2 model for state-of-the-art accuracy
+    - Smart formatting for improved readability
+    - Advanced diarization for speaker identification
+    - Dictation optimization for conversational content
+    - Punctuation for better transcript flow
+  - Configurable via command-line arguments:
+    - Control over all transcription parameters
+    - Ability to enable/disable specific features
+    - Custom language and model selection
 - `BatchTranscriberService`: Manages transcription of multiple episodes
   - Integrates with episode analysis for filtering shorts
   - Processes only applicable episodes

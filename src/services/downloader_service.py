@@ -60,7 +60,7 @@ class YtDlpDownloader(DownloaderServiceInterface):
         output_template = os.path.join(output_path, f"{video_id}.%(ext)s")
         
         ydl_opts = {
-            'format': 'bestaudio/best',
+            'format': 'bestaudio',
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': self.format,
@@ -70,14 +70,25 @@ class YtDlpDownloader(DownloaderServiceInterface):
             'quiet': False,
             'no_warnings': True,
             'ignoreerrors': True,
+            'no_check_certificate': True,
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
-        
-        # Return the filename of the downloaded audio
-        filename = f"{video_id}.{self.format}"
-        return os.path.join(output_path, filename)
+            try:
+                ydl.download([url])
+                # Return the filename of the downloaded audio
+                filename = f"{video_id}.{self.format}"
+                output_file = os.path.join(output_path, filename)
+                
+                # Verify the file exists and has content
+                if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+                    return output_file
+                else:
+                    raise Exception(f"Download failed or file is empty: {output_file}")
+                    
+            except Exception as e:
+                print(f"Error downloading {video_id}: {e}")
+                raise
     
     def download_episodes(self, episodes: List[PodcastEpisode], output_dir: str) -> List[PodcastEpisode]:
         """Download audio for multiple episodes."""
@@ -97,6 +108,8 @@ class YtDlpDownloader(DownloaderServiceInterface):
                 
             except Exception as e:
                 print(f"Error downloading {episode.video_id}: {e}")
+                # Don't update the episode if download failed
+                continue
         
         return episodes
 

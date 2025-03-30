@@ -4,73 +4,70 @@ Service for batch transcription of podcast episodes.
 """
 
 import os
-import sys
-import subprocess
-from typing import List, Optional
-from src.services.episode_analyzer import EpisodeAnalyzerService
+import json
+from typing import List
+from pathlib import Path
+from src.services.transcription_service import DeepgramTranscriptionService
+from src.models.podcast_episode import PodcastEpisode
+from src.repositories.episode_repository import JsonFileRepository
 
 class BatchTranscriberService:
     """Service for batch transcription of podcast episodes."""
     
-    def __init__(self, transcription_script_path: str = "transcribe_audio.py", 
-                 display_script_path: str = "display_transcript.py",
-                 min_duration: int = 60):
+    def __init__(self, api_key: str = None):
         """
         Initialize the batch transcriber service.
         
         Args:
-            transcription_script_path: Path to the transcription script
-            display_script_path: Path to the display script for readable output
-            min_duration: Minimum duration in seconds for an episode to be transcribed
+            api_key: Deepgram API key (optional, will use env var if not provided)
         """
-        self.transcription_script_path = transcription_script_path
-        self.display_script_path = display_script_path
-        self.min_duration = min_duration
-        self.analyzer = EpisodeAnalyzerService()
+        # Use environment variable if no API key provided
+        if not api_key:
+            api_key = os.getenv('DEEPGRAM_API_KEY')
+            
+        self.transcription_service = DeepgramTranscriptionService(api_key)
+        self.repository = JsonFileRepository('data/json/episodes.json')
     
-    def transcribe_episodes(self, episode_ids: List[str], output_dir: str = "data/transcripts") -> None:
+    def transcribe_episodes(self, episode_ids: List[str], audio_dir: str = "data/audio", transcripts_dir: str = "data/transcripts") -> None:
         """
         Transcribe the specified episodes.
         
         Args:
             episode_ids: List of episode IDs to transcribe
-            output_dir: Directory to store the transcripts
+            audio_dir: Directory containing audio files
+            transcripts_dir: Directory to store the transcripts
         """
-        os.makedirs(output_dir, exist_ok=True)
+        # Create output directory if it doesn't exist
+        Path(transcripts_dir).mkdir(parents=True, exist_ok=True)
         
         print(f"\nStarting transcription of {len(episode_ids)} episodes...")
         print("="*80)
         
-        for i, episode_id in enumerate(episode_ids):
-            print(f"\nTranscribing episode {i+1}/{len(episode_ids)}: {episode_id}")
-            print("-"*80)
-            
-            # Prepare the transcription command
-            cmd = f"python {self.transcription_script_path} --episode {episode_id} --min-duration {self.min_duration}"
-            
-            # Run the transcription command
-            process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            
-            # Stream output
-            while True:
-                output = process.stdout.readline()
-                if output == '' and process.poll() is not None:
-                    break
-                if output:
-                    print(output.strip())
-            
-            # Check for errors
-            if process.returncode != 0:
-                stderr = process.stderr.read()
-                print(f"Error: {stderr}", file=sys.stderr)
-                continue
+        episodes_to_transcribe = []
+        for episode_id in episode_ids:
+            episode = self.repository.get_episode(episode_id)
+            if episode and episode.audio_filename:
+                episodes_to_transcribe.append(episode)
+            else:
+                print(f"Skipping episode {episode_id} - no audio file found")
+        
+        # Transcribe episodes using our transcription service
+        updated_episodes = self.transcription_service.transcribe_episodes(
+            episodes_to_transcribe,
+            audio_dir,
+            transcripts_dir
+        )
+        
+        # Update episodes in repository
+        for episode in updated_episodes:
+            self.repository.update_episode(episode)
         
         print("\nTranscription complete!")
         print("="*80)
     
     def generate_readable_transcripts(self, episode_ids: List[str], 
-                                     input_dir: str = "data/transcripts",
-                                     output_dir: str = "data/transcripts") -> None:
+                                   input_dir: str = "data/transcripts",
+                                   output_dir: str = "data/transcripts") -> None:
         """
         Generate readable text transcripts from JSON transcripts.
         
@@ -79,47 +76,80 @@ class BatchTranscriberService:
             input_dir: Directory containing JSON transcripts
             output_dir: Directory to store readable transcripts
         """
-        os.makedirs(output_dir, exist_ok=True)
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
         
         print("\nGenerating readable transcripts...")
         
         for episode_id in episode_ids:
-            transcript_path = f"{input_dir}/{episode_id}.json"
-            text_path = f"{output_dir}/{episode_id}.txt"
+            json_path = os.path.join(input_dir, f"{episode_id}.json")
+            text_path = os.path.join(output_dir, f"{episode_id}.txt")
             
-            if os.path.exists(transcript_path):
-                # Generate readable text transcript
-                cmd = f"python {self.display_script_path} {transcript_path} -o {text_path}"
-                subprocess.run(cmd, shell=True)
-                print(f"Transcript saved to {text_path}")
-            else:
+            if not os.path.exists(json_path):
                 print(f"Warning: JSON transcript not found for episode {episode_id}")
-    
-    def transcribe_full_episodes(self, episodes_json_path: str = "data/json/episodes.json", 
-                               limit: int = 10) -> None:
-        """
-        Transcribe only full episodes (not shorts) from the downloaded episodes.
-        
-        Args:
-            episodes_json_path: Path to the episodes JSON file
-            limit: Maximum number of episodes to analyze and transcribe
-        """
-        # Get list of full episode IDs from analysis
-        full_episode_ids = self.analyzer.get_full_episode_ids(episodes_json_path, limit)
-        
-        # Transcribe full episodes
-        self.transcribe_episodes(full_episode_ids)
-        
-        # Generate readable transcripts
-        self.generate_readable_transcripts(full_episode_ids)
-        
-        print("\nTranscription process complete! Transcripts are available in the data/transcripts directory.")
+                continue
+                
+            try:
+                # Read JSON transcript
+                with open(json_path, 'r') as f:
+                    transcript = json.load(f)
+                
+                # Generate readable text
+                with open(text_path, 'w') as f:
+                    if ('results' in transcript and 
+                        'channels' in transcript['results'] and 
+                        transcript['results']['channels'] and
+                        'alternatives' in transcript['results']['channels'][0] and
+                        transcript['results']['channels'][0]['alternatives']):
+                        
+                        # Get the transcript data
+                        transcript_data = transcript['results']['channels'][0]['alternatives'][0]
+                        
+                        # Get speaker mapping if available
+                        speaker_map = {}
+                        if 'metadata' in transcript and 'speakers' in transcript['metadata']:
+                            for speaker in transcript['metadata']['speakers']:
+                                speaker_map[speaker.get('id')] = speaker.get('name', f"Speaker {speaker.get('id')}")
+                        
+                        # Write each word with its speaker
+                        current_speaker = None
+                        current_text = []
+                        current_start = None
+                        
+                        for word in transcript_data.get('words', []):
+                            speaker = word.get('speaker', None)
+                            
+                            # If speaker changes or this is the first word, write the previous segment
+                            if speaker != current_speaker and current_text:
+                                speaker_name = speaker_map.get(current_speaker, f"Speaker {current_speaker}")
+                                f.write(f"[{current_start:.1f}] {speaker_name}: {' '.join(current_text)}\n")
+                                current_text = []
+                            
+                            # Start new segment if needed
+                            if current_text == []:
+                                current_start = word.get('start', 0)
+                                current_speaker = speaker
+                            
+                            # Add word to current segment
+                            current_text.append(word.get('punctuated_word', word.get('word', '')))
+                        
+                        # Write final segment if any
+                        if current_text:
+                            speaker_name = speaker_map.get(current_speaker, f"Speaker {current_speaker}")
+                            f.write(f"[{current_start:.1f}] {speaker_name}: {' '.join(current_text)}\n")
+                    else:
+                        f.write("No transcript data found\n")
+                        
+                print(f"Generated readable transcript: {text_path}")
+                
+            except Exception as e:
+                print(f"Error processing transcript for episode {episode_id}: {e}")
+                continue
 
 # Command-line interface
 def main():
     """Run batch transcription as a standalone script."""
     batch_transcriber = BatchTranscriberService()
-    batch_transcriber.transcribe_full_episodes()
+    batch_transcriber.transcribe_episodes()
 
 if __name__ == "__main__":
     main() 

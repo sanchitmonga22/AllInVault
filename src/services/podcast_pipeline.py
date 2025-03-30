@@ -17,7 +17,7 @@ import logging
 from src.models.podcast_episode import PodcastEpisode
 from src.repositories.episode_repository import JsonFileRepository
 from src.services.youtube_service import YouTubeService
-from src.services.downloader_service import PytubeDownloader
+from src.services.downloader_service import YtDlpDownloader
 from src.services.episode_analyzer import EpisodeAnalyzerService
 from src.services.batch_transcriber import BatchTranscriberService
 from src.utils.config import load_config, AppConfig
@@ -54,14 +54,12 @@ class PodcastPipelineService:
         
         # Initialize services
         self.youtube_service = YouTubeService(self.config.youtube_api_key)
-        self.downloader = PytubeDownloader(
+        self.downloader = YtDlpDownloader(
             format=self.config.audio_format, 
             quality=self.config.audio_quality
         )
         self.analyzer = EpisodeAnalyzerService(min_duration=self.min_duration_seconds)
-        self.batch_transcriber = BatchTranscriberService(
-            min_duration=self.min_duration_seconds
-        )
+        self.batch_transcriber = BatchTranscriberService()
         
         # Initialize repository
         self.repository = JsonFileRepository(str(self.config.episodes_db_path))
@@ -188,21 +186,27 @@ class PodcastPipelineService:
         logger.info(f"Transcribing {len(episodes)} episodes")
         
         # Use the batch transcriber service to handle transcription
-        episode_ids = [ep.video_id for ep in episodes]
-        self.batch_transcriber.transcribe_episodes(episode_ids)
+        self.batch_transcriber.transcribe_episodes(
+            [ep.video_id for ep in episodes],
+            audio_dir=audio_path,
+            transcripts_dir=transcripts_path
+        )
         
         # Generate readable text transcripts
-        self.batch_transcriber.generate_readable_transcripts(episode_ids)
+        self.batch_transcriber.generate_readable_transcripts(
+            [ep.video_id for ep in episodes],
+            input_dir=transcripts_path,
+            output_dir=transcripts_path
+        )
         
         # Reload episodes to get updated transcript information
         updated_episodes = []
-        for ep_id in episode_ids:
-            updated_ep = self.repository.get_episode(ep_id)
+        for episode in episodes:
+            updated_ep = self.repository.get_episode(episode.video_id)
             if updated_ep:
                 updated_episodes.append(updated_ep)
         
         logger.info("Transcription complete")
-        
         return updated_episodes
     
     def run_pipeline(self, num_episodes: int = 5, download_audio: bool = True, transcribe: bool = True) -> None:
