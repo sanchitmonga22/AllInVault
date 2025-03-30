@@ -229,14 +229,11 @@ graph TD
     SPEAKER_SVC -- "identifies speakers" --> IDENTIFY
     OPENAI_API -- "speaker analysis" --> LLM_SVC
     
-    %% Stage Process Flows
-    subgraph "Pipeline Data Flow"
-        direction LR
-        META[Episode Metadata] --> TYPE[Episode Type<br>(Full/Short)]
-        TYPE --> AUDIO[Audio Files]
-        AUDIO --> TRANSCRIPT[Transcripts]
-        TRANSCRIPT --> SPEAKERS[Identified Speakers]
-    end
+    %% Stage Process Flows - Simplified to avoid parsing errors
+    META[Episode Metadata] --> TYPE[Episode Type]
+    TYPE --> AUDIO[Audio Files]
+    AUDIO --> TRANSCRIPT[Transcripts]
+    TRANSCRIPT --> SPEAKERS[Identified Speakers]
     
     %% Styling
     classDef cli fill:#f9d,stroke:#333,stroke-width:2px
@@ -255,16 +252,3 @@ graph TD
     class META_DB,AUDIO_DIR,TRANS_DIR storage
     class YT_API,DEEPGRAM_API,OPENAI_API external
 ```
-
-This diagram shows:
-
-1. **Command-Line Interface**: The entry point for user interactions.
-2. **Pipeline Orchestrator**: Coordinates the execution of stages.
-3. **Pipeline Stages**: The five main processing stages.
-4. **Service Layer**: Specialized services for each processing task.
-5. **Repository Layer**: Data access abstraction.
-6. **External Services**: Third-party APIs the system interacts with.
-7. **Data Storage**: Where different types of data are persisted.
-8. **Data Flow**: How information flows through the pipeline.
-
-The dependencies between stages are shown with dotted lines, while the solid lines represent active method calls or data flow. The diagram also illustrates the progression of the podcast data from raw metadata to fully processed transcripts with identified speakers.
