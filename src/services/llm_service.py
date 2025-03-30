@@ -37,13 +37,13 @@ class LLMProvider(ABC):
 class OpenAIProvider(LLMProvider):
     """OpenAI implementation of LLM provider."""
     
-    def __init__(self, api_key: Optional[str] = None, model: str = "gpt-3.5-turbo"):
+    def __init__(self, api_key: Optional[str] = None, model: str = "gpt-4o"):
         """
         Initialize OpenAI provider.
         
         Args:
             api_key: OpenAI API key (defaults to environment variable)
-            model: Model to use (default: gpt-3.5-turbo)
+            model: Model to use (default: gpt-4o)
         """
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         if not self.api_key:
@@ -69,6 +69,48 @@ class OpenAIProvider(LLMProvider):
             title = episode_metadata.get("title", "")
             description = episode_metadata.get("description", "")
             
+            # Extract more context from metadata
+            guest_hint = ""
+            for key_phrase in ["with ", "featuring ", "guest ", "welcomes "]:
+                if key_phrase in description.lower():
+                    parts = description.lower().split(key_phrase)
+                    if len(parts) > 1:
+                        # Get the part after the key phrase up to the next punctuation
+                        potential_guest = parts[1].split(".")[0].split(",")[0].split("!")[0].strip()
+                        if potential_guest and len(potential_guest) > 3:
+                            guest_hint = f"The description mentions someone after '{key_phrase}': '{potential_guest}'"
+                            break
+            
+            # Extract a better sample with more turns of conversation
+            conversation_turns = []
+            current_speaker = None
+            current_text = ""
+            
+            for line in transcript_sample.split('\n'):
+                if line.startswith("Speaker "):
+                    # Save previous speaker's text
+                    if current_speaker is not None and current_text:
+                        conversation_turns.append(f"{current_speaker}: {current_text}")
+                    
+                    # Start new speaker
+                    parts = line.split(':', 1)
+                    if len(parts) > 1:
+                        current_speaker = parts[0]
+                        current_text = parts[1].strip()
+                    else:
+                        current_speaker = parts[0]
+                        current_text = ""
+                else:
+                    # Continue current speaker's text
+                    current_text += " " + line.strip()
+            
+            # Add the last speaker
+            if current_speaker is not None and current_text:
+                conversation_turns.append(f"{current_speaker}: {current_text}")
+            
+            # Join the conversation turns
+            formatted_transcript = "\n".join(conversation_turns)
+            
             prompt = f"""
             I need to identify all speakers in a podcast episode based on the following information:
             
@@ -76,7 +118,10 @@ class OpenAIProvider(LLMProvider):
             
             DESCRIPTION: {description}
             
-            TRANSCRIPT SAMPLE: {transcript_sample}
+            {guest_hint}
+            
+            TRANSCRIPT (CONVERSATION FORMAT):
+            {formatted_transcript}
             
             Known podcast hosts are:
             1. Chamath Palihapitiya
@@ -84,9 +129,16 @@ class OpenAIProvider(LLMProvider):
             3. David Sacks
             4. David Friedberg
             
-            Please identify:
-            1. Which of the known hosts are present in this episode
-            2. Any guest speakers that appear in this episode (from title, description, or transcript)
+            Their speaking styles:
+            - Chamath: Often discusses economics, venture capital, policy issues; direct in his speaking style
+            - Jason: Usually moderates, introduces guests, asks questions; energetic speaking style
+            - Sacks: Provides political commentary, business strategy; measured and thoughtful speaking style
+            - Friedberg: Discusses scientific topics, data-driven perspectives; analytical speaking style
+            
+            Analyze the transcript to determine:
+            1. Which of the known hosts are participating in this episode
+            2. Any guest speakers appearing in this episode (from title, description, or transcript)
+            3. Map each "Speaker X" to their actual identity
             
             Format your response as a JSON object with the following structure:
             {{
@@ -99,31 +151,24 @@ class OpenAIProvider(LLMProvider):
             }}
             """
             
+            # Log the prompt being sent to the API
+            logger.info(f"Sending prompt to OpenAI:\n{prompt}")
+            
             # Try using newer OpenAI API version first
             try:
                 # Compatible with openai>=1.0.0
                 from openai import OpenAI
                 client = OpenAI(api_key=self.api_key)
                 
-                # Different parameters based on model - only gpt-4-turbo and newer support response_format=json_object
-                if "gpt-4-turbo" in self.model or "gpt-4-0125" in self.model:
-                    response = client.chat.completions.create(
-                        model=self.model,
-                        messages=[
-                            {"role": "system", "content": "You are a helpful assistant that identifies podcast speakers."},
-                            {"role": "user", "content": prompt}
-                        ],
-                        response_format={"type": "json_object"}
-                    )
-                else:
-                    # For older models like gpt-4, don't use response_format
-                    response = client.chat.completions.create(
-                        model=self.model,
-                        messages=[
-                            {"role": "system", "content": "You are a helpful assistant that identifies podcast speakers. Return JSON only."},
-                            {"role": "user", "content": prompt + "\n\nImportant: Return your response as a valid JSON object only, with no other text."}
-                        ]
-                    )
+                # Different parameters based on model
+                response = client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": "You are a helpful assistant that identifies podcast speakers by analyzing transcripts and metadata."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    response_format={"type": "json_object"}
+                )
                 
                 content = response.choices[0].message.content
             except (ImportError, AttributeError):
@@ -131,8 +176,8 @@ class OpenAIProvider(LLMProvider):
                 response = openai.ChatCompletion.create(
                     model=self.model,
                     messages=[
-                        {"role": "system", "content": "You are a helpful assistant that identifies podcast speakers."},
-                        {"role": "user", "content": prompt}
+                        {"role": "system", "content": "You are a helpful assistant that identifies podcast speakers. Return JSON only."},
+                        {"role": "user", "content": prompt + "\n\nImportant: Return your response as a valid JSON object only, with no other text."}
                     ]
                 )
                 content = response.choices[0].message["content"]
@@ -254,7 +299,7 @@ class LLMService:
         self.provider_name = provider.lower()
         
         if self.provider_name == "openai":
-            model = model or "gpt-3.5-turbo"
+            model = model or "gpt-4o"
             self.provider = OpenAIProvider(api_key=api_key, model=model)
         elif self.provider_name == "deepseek":
             model = model or "deepseek-coder"
