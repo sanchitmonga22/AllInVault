@@ -37,6 +37,11 @@ class YouTubeServiceInterface(ABC):
     def get_all_episodes(self, channel_id: str, max_results: int = None) -> List[PodcastEpisode]:
         """Get all episodes from a channel as PodcastEpisode objects."""
         pass
+    
+    @abstractmethod
+    def get_episode_by_id(self, video_id: str) -> Optional[PodcastEpisode]:
+        """Get a specific episode by video ID."""
+        pass
 
 
 class YouTubeService(YouTubeServiceInterface):
@@ -164,3 +169,46 @@ class YouTubeService(YouTubeServiceInterface):
         except googleapiclient.errors.HttpError as e:
             print(f"YouTube API error: {e}")
             raise 
+    
+    def get_episode_by_id(self, video_id: str) -> Optional[PodcastEpisode]:
+        """
+        Get a specific episode by video ID.
+        
+        Args:
+            video_id: YouTube video ID to fetch
+            
+        Returns:
+            PodcastEpisode object or None if not found
+        """
+        try:
+            # Get video details
+            video_details = self.get_video_details([video_id])
+            
+            if not video_details:
+                return None
+                
+            video = video_details[0]
+            snippet = video["snippet"]
+            content_details = video["contentDetails"]
+            statistics = video["statistics"]
+            
+            episode = PodcastEpisode(
+                video_id=video["id"],
+                title=snippet["title"],
+                description=snippet["description"],
+                published_at=datetime.fromisoformat(snippet["publishedAt"].replace("Z", "+00:00")),
+                channel_id=snippet["channelId"],
+                channel_title=snippet["channelTitle"],
+                tags=snippet.get("tags", []),
+                duration=content_details.get("duration"),
+                view_count=int(statistics.get("viewCount", 0)),
+                like_count=int(statistics.get("likeCount", 0)) if "likeCount" in statistics else None,
+                comment_count=int(statistics.get("commentCount", 0)) if "commentCount" in statistics else None,
+                thumbnail_url=snippet.get("thumbnails", {}).get("high", {}).get("url")
+            )
+            
+            return episode
+                
+        except googleapiclient.errors.HttpError as e:
+            print(f"YouTube API error: {e}")
+            return None 

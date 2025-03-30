@@ -1,5 +1,220 @@
 # AllInVault Architecture
 
+## Overview
+
+AllInVault is a podcast processing system designed with a modular, service-oriented architecture that follows SOLID principles. The system is organized into distinct layers with clear responsibilities:
+
+1. **Command-Line Interface Layer**: Entry points for user interaction
+2. **Pipeline Orchestration Layer**: Manages the execution flow and stage coordination
+3. **Service Layer**: Contains the core business logic for each processing stage
+4. **Repository Layer**: Handles data persistence and retrieval
+5. **Model Layer**: Defines the data structures
+
+## Pipeline Architecture
+
+The system is built around a flexible, stage-based pipeline architecture that allows for:
+
+- Running the entire pipeline end-to-end
+- Running specific stages individually
+- Processing all episodes or specific episodes
+- Configuring stage-specific parameters
+- Managing dependencies between stages
+
+### Pipeline Stages
+
+The pipeline is divided into these sequential stages:
+
+1. **Fetch Metadata**: Retrieves episode information from YouTube API
+2. **Analyze Episodes**: Identifies full episodes vs shorts based on duration
+3. **Download Audio**: Downloads audio files for the episodes
+4. **Transcribe Audio**: Generates transcriptions using speech-to-text
+5. **Identify Speakers**: Maps speakers in transcripts to actual names
+
+```
+┌───────────────┐    ┌───────────────┐    ┌───────────────┐    ┌───────────────┐    ┌───────────────┐
+│               │    │               │    │               │    │               │    │               │
+│     Fetch     │    │    Analyze    │    │   Download    │    │   Transcribe  │    │   Identify    │
+│    Metadata   │───▶│   Episodes    │───▶│     Audio     │───▶│     Audio     │───▶│   Speakers    │
+│               │    │               │    │               │    │               │    │               │
+└───────────────┘    └───────────────┘    └───────────────┘    └───────────────┘    └───────────────┘
+```
+
+### Component Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                              CLI Layer                                   │
+│                        ┌─────────────┐                                   │
+│                        │ pipeline.py │                                   │
+│                        └─────────────┘                                   │
+└───────────────────────────┬─────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                     Pipeline Orchestration Layer                         │
+│  ┌─────────────────────────────────────────────────────────────────┐    │
+│  │                    PipelineOrchestrator                          │    │
+│  │                                                                  │    │
+│  │  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐ │    │
+│  │  │  Fetch  │  │ Analyze │  │Download │  │Transcr. │  │Identify │ │    │
+│  │  │  Stage  │  │  Stage  │  │  Stage  │  │  Stage  │  │  Stage  │ │    │
+│  │  └─────────┘  └─────────┘  └─────────┘  └─────────┘  └─────────┘ │    │
+│  └─────────────────────────────────────────────────────────────────┘    │
+└───────────────────────────┬─────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           Service Layer                                  │
+│                                                                          │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐     │
+│  │   YouTube   │  │ Downloader  │  │Transcription│  │   Speaker   │     │
+│  │   Service   │  │   Service   │  │   Service   │  │ Ident. Svc  │     │
+│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘     │
+└───────────────────────────┬─────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         Repository Layer                                 │
+│                                                                          │
+│             ┌─────────────────────────────────────────┐                  │
+│             │          EpisodeRepository              │                  │
+│             └─────────────────────────────────────────┘                  │
+└───────────────────────────┬─────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                            Data Layer                                    │
+│                                                                          │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐     │
+│  │ episodes.json│  │ audio files │  │ transcripts │  │ other data  │     │
+│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘     │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+## Key Classes and Components
+
+### 1. Pipeline Orchestrator
+
+The `PipelineOrchestrator` class is the central coordination point that:
+- Manages the execution of pipeline stages
+- Tracks dependencies between stages
+- Handles the flow of data between stages
+- Provides flexible execution options
+
+```python
+orchestrator = PipelineOrchestrator()
+# Execute specific stage
+orchestrator.execute_stage(PipelineStage.DOWNLOAD_AUDIO, episode_ids=['xyz123'])
+# Execute pipeline from start to end
+orchestrator.execute_pipeline(episode_ids=['xyz123'])
+```
+
+### 2. Stage Architecture
+
+Each pipeline stage is implemented following a standard interface:
+
+- `AbstractStage`: Base class defining stage contracts
+- Concrete stage implementations (e.g., `FetchMetadataStage`, `DownloadAudioStage`)
+- `StageResult`: Container for stage execution results
+
+This design allows for:
+- Unified interface for all stages
+- Clear dependency management
+- Consistent error handling
+- Flexible extension with new stages
+
+### 3. Command-Line Interface
+
+The system provides a unified command-line interface with:
+- Multiple operation modes (pipeline, display, verify)
+- Stage selection options
+- Episode filtering capabilities
+- Configuration parameters for each stage
+- Dependency control
+
+```
+# Pipeline operations
+python pipeline.py pipeline --stages fetch_metadata,download_audio --episodes xyz123,abc456
+python pipeline.py pipeline --start-stage download_audio --end-stage identify_speakers
+
+# Display operations
+python pipeline.py display --episode xyz123 --format json
+
+# Verification operations
+python pipeline.py verify --stats-only
+```
+
+### 4. Repository Layer
+
+The `JsonFileRepository` provides a consistent data access mechanism:
+- CRUD operations for episode data
+- Data persistence to JSON files
+- Serialization/deserialization of models
+
+### 5. Data Models
+
+The `PodcastEpisode` model encapsulates all episode data:
+
+```
+PodcastEpisode
+├── video_id: str                     # YouTube video ID
+├── title: str                        # Episode title
+├── description: str                  # Episode description
+├── published_at: datetime            # Publication date
+├── channel_id: str                   # YouTube channel ID
+├── channel_title: str                # Channel name
+├── tags: List[str]                   # Video tags
+├── duration: str                     # ISO 8601 duration from YouTube
+├── view_count: int                   # View count
+├── like_count: int                   # Like count
+├── comment_count: int                # Comment count
+├── thumbnail_url: str                # Thumbnail URL
+├── audio_filename: str               # Path to audio file
+├── transcript_filename: str          # Path to transcript file
+├── transcript_duration: float        # Duration of transcript in seconds
+├── transcript_utterances: int        # Number of utterances in transcript
+├── speaker_count: int                # Number of speakers
+└── metadata: Dict                    # Additional metadata
+    ├── type: str                     # FULL or SHORT
+    ├── duration_seconds: int         # Duration in seconds
+    └── coverage_percentage: float    # Transcript coverage
+```
+
+## Data Flow
+
+1. YouTube data is fetched and stored in episodes.json
+2. Episode metadata is enriched with duration analysis
+3. Audio files are downloaded and linked to episodes
+4. Transcription is performed and linked to episodes
+5. Speakers are identified and added to episode metadata
+
+## Extension Points
+
+The architecture is designed to be extensible:
+
+1. **New Stages**: Add new classes derived from AbstractStage
+2. **Alternative Services**: Implement new services for different providers
+3. **Different Repositories**: Implement new repository classes
+4. **Enhanced Models**: Extend data models with additional fields
+
+## Design Patterns
+
+The system leverages several design patterns:
+
+1. **Strategy Pattern**: For pluggable service implementations
+2. **Repository Pattern**: For data access abstraction
+3. **Command Pattern**: In the CLI implementation
+4. **Abstract Factory**: For stage creation
+5. **Dependency Injection**: For service composition
+
+## SOLID Principles Application
+
+1. **Single Responsibility**: Each class has a single responsibility
+2. **Open/Closed**: Extensions via inheritance without modification
+3. **Liskov Substitution**: Service implementations are interchangeable
+4. **Interface Segregation**: Clean interfaces for each component
+5. **Dependency Inversion**: High-level modules depend on abstractions
+
 ## System Overview
 
 AllInVault is a comprehensive podcast analysis platform designed to download, process, transcribe, and analyze podcast episodes. The system follows a modular, service-oriented architecture that adheres to SOLID principles for maintainability and extensibility.
@@ -32,12 +247,7 @@ AllInVault/
 │   └── transcripts/            # Transcript storage
 ├── src/                        # Source code
 │   ├── cli/                    # Command-line interfaces
-│   │   ├── analyze_episodes_cmd.py  # CLI for episode analysis
-│   │   ├── display_transcript_cmd.py # CLI for transcript display
-│   │   ├── download_podcast_cmd.py  # CLI for podcast download
-│   │   ├── process_podcast_cmd.py   # CLI for full pipeline
-│   │   ├── transcribe_audio_cmd.py  # CLI for audio transcription
-│   │   └── transcribe_full_episodes_cmd.py # CLI for batch transcription
+│   │   └── pipeline_cmd.py     # Unified CLI implementation
 │   ├── models/                 # Data models
 │   │   └── podcast_episode.py  # Podcast episode model
 │   ├── repositories/           # Data access layer
@@ -48,15 +258,15 @@ AllInVault/
 │   │   ├── transcription_service.py # Transcription service
 │   │   ├── episode_analyzer.py # Episode analysis service
 │   │   ├── batch_transcriber.py # Batch transcription service
-│   │   └── podcast_pipeline.py # Full pipeline orchestration
+│   │   ├── pipeline_orchestrator.py # Pipeline orchestration service
+│   │   └── speaker_identification_service.py # Speaker identification
 │   └── utils/                  # Utilities
 │       └── config.py           # Configuration utilities
-├── analyze_episodes.py         # Entry point for episode analysis
-├── display_transcript.py       # Entry point for transcript display
-├── download_podcast.py         # Entry point for podcast download
-├── process_podcast.py          # Entry point for full pipeline
-├── transcribe_audio.py         # Entry point for audio transcription
-└── transcribe_full_episodes.py # Entry point for batch transcription
+├── pipeline.py                 # Single entry point for all operations
+├── .env                        # Environment variables
+├── requirements.txt            # Python dependencies
+├── README.md                   # Project documentation
+└── architecture.md             # Architecture documentation
 ```
 
 ## Data Flow and Integration
@@ -210,17 +420,13 @@ PodcastEpisode
 
 ## Command-Line Interface
 
-The system provides multiple entry points for different tasks:
+The system provides a single entry point for all operations:
 
-1. **Individual Tools**:
-   - `analyze_episodes.py`: Analyze and categorize episodes
-   - `download_podcast.py`: Download episode metadata and audio
-   - `transcribe_audio.py`: Transcribe audio files
-   - `transcribe_full_episodes.py`: Batch transcribe full episodes
-   - `display_transcript.py`: View formatted transcripts
-
-2. **Unified Pipeline**:
-   - `process_podcast.py`: Execute the complete pipeline in one command
+1. **Unified Command Interface**:
+   - `pipeline.py`: Single script for all operations
+     - `pipeline`: Process episodes through the pipeline
+     - `display`: View formatted transcripts
+     - `verify`: Check transcript metadata and statistics
 
 ## System Architecture Diagram
 

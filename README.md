@@ -12,6 +12,27 @@ All In Vault is a comprehensive platform for downloading, transcribing, and anal
 - **Episode Analysis**: Distinguishes between full episodes and shorts
 - **Speaker Identification**: Uses heuristics and optional LLM integration to identify speakers
 
+## Flexible Pipeline Architecture
+
+AllInVault features a flexible, stage-based pipeline architecture that provides granular control over the podcast processing workflow:
+
+- **Modular Stages**: Each processing step is encapsulated in a separate stage
+- **Flexible Execution**: Run the entire pipeline or specific stages
+- **Episode Targeting**: Process all episodes or target specific episodes by ID
+- **Stage Dependencies**: Automatic handling of stage dependencies
+- **Configurable Parameters**: Each stage accepts specific configuration options
+- **Consistent Interface**: Unified command-line interface for all operations
+
+The pipeline consists of these sequential stages:
+
+1. **Fetch Metadata**: Retrieve episode information from YouTube API
+2. **Analyze Episodes**: Identify full episodes vs shorts based on duration
+3. **Download Audio**: Download audio files for episodes
+4. **Transcribe Audio**: Generate transcriptions using Deepgram
+5. **Identify Speakers**: Map speakers in transcripts to actual names
+
+See [architecture.md](architecture.md) for detailed documentation of the system design.
+
 ## Installation
 
 1. Clone this repository:
@@ -40,113 +61,207 @@ All In Vault is a comprehensive platform for downloading, transcribing, and anal
 
 ## Usage
 
-### Complete Pipeline
+### Unified Command Interface
 
-Run the entire pipeline with a single command:
-
-```bash
-python process_podcast.py --num-episodes 5
-```
-
-This will:
-1. Fetch the latest 5 episodes from YouTube
-2. Analyze and identify full episodes
-3. Download audio for full episodes
-4. Transcribe the audio using Deepgram
-5. Optionally identify speakers using heuristics or LLM
-
-### Individual Steps
-
-#### 1. Download Episode Metadata
+AllInVault provides a single, unified command-line interface for all operations through the `pipeline.py` script:
 
 ```bash
-python download_podcast.py --info-only
+python pipeline.py [command] [options]
 ```
 
-Options:
-- `--limit`: Number of episodes to fetch (default: 10)
-- `--info-only`: Only fetch metadata, don't download audio
-- `--format`: Audio format (default: mp3)
-- `--quality`: Audio quality in kbps (default: 192)
+Available commands:
+- `pipeline` (default): Execute the pipeline or specific stages
+- `display`: Display a transcript
+- `verify`: Verify transcript metadata and display statistics
 
-#### 2. Analyze Episodes
+### Pipeline Command
+
+The `pipeline` command (default) processes podcast episodes through the flexible stage-based architecture:
 
 ```bash
-python analyze_episodes.py
+python pipeline.py [pipeline] [options]
 ```
 
-Options:
-- `--limit`: Number of episodes to analyze (default: all)
-- `--min-duration`: Minimum duration in seconds for a full episode (default: 180)
-
-#### 3. Download Audio
+#### Basic Pipeline Operations
 
 ```bash
-python download_podcast.py
+# Process the latest 5 episodes through the complete pipeline
+python pipeline.py
+
+# Explicitly use the pipeline command (same as above)
+python pipeline.py pipeline
+
+# Process a specific number of episodes
+python pipeline.py pipeline --num-episodes 10
+
+# Process specific episodes by video ID
+python pipeline.py pipeline --episodes "Wr12BFko-Xo,8UzQ5uf_vik"
 ```
 
-Options:
-- `--limit`: Number of episodes to download (default: 10)
-- `--format`: Audio format (default: mp3)
-- `--quality`: Audio quality in kbps (default: 192)
-
-#### 4. Transcribe Audio
+#### Stage Selection Options
 
 ```bash
-python transcribe_audio.py
+# Run only specific stages (comma-separated)
+python pipeline.py pipeline --stages fetch_metadata,download_audio
+
+# Run from a specific stage to the end
+python pipeline.py pipeline --start-stage download_audio
+
+# Run a range of stages
+python pipeline.py pipeline --start-stage download_audio --end-stage transcribe_audio
+
+# Skip automatic dependency resolution
+python pipeline.py pipeline --stages transcribe_audio --skip-dependencies
 ```
 
-Options:
-- `--episode`: Process a specific episode by video ID
-- `--model`: Deepgram model to use (default: nova-3)
-- `--detect-language`: Auto-detect language (default: false)
-- `--smart-format`: Apply smart formatting to transcripts (default: true)
-- `--utterances`: Generate utterance-level transcripts (default: true)
-- `--diarize`: Perform speaker diarization (default: true)
+Available stages:
+- `fetch_metadata`: Retrieve episode information from YouTube API
+- `analyze_episodes`: Identify full episodes vs shorts based on duration
+- `download_audio`: Download audio files for episodes
+- `transcribe_audio`: Generate transcriptions using Deepgram
+- `identify_speakers`: Map speakers in transcripts to actual names
 
-#### 5. Transcribe Full Episodes (Batch Operation)
+#### Fetch Metadata Options
 
 ```bash
-python transcribe_full_episodes.py
+# Limit the number of episodes to fetch
+python pipeline.py pipeline --stages fetch_metadata --limit 20
 ```
 
-Options:
-- `--limit`: Number of episodes to transcribe (default: all full episodes)
+Flags:
+- `--limit`: Maximum number of episodes to fetch metadata for
 
-#### 6. Display Transcripts
+#### Episode Analysis Options
 
 ```bash
-python display_transcript.py --episode VIDEO_ID
+# Set custom duration threshold for full episodes
+python pipeline.py pipeline --stages analyze_episodes --min-duration 300
 ```
 
-Options:
-- `--episode`: Video ID of the episode to display
-- `--format`: Display format (default: text)
-- `--show-speakers`: Show speaker information (default: true)
-- `--show-timestamps`: Show timestamps (default: false)
+Flags:
+- `--min-duration`: Minimum duration in seconds for an episode to be considered full (default: 180)
 
-#### 7. Verify and Update Metadata
+#### Download Audio Options
 
 ```bash
-python verify_transcripts.py
+# Download in different format and quality
+python pipeline.py pipeline --stages download_audio --audio-format m4a --audio-quality 256
+
+# Download all episodes, not just full episodes
+python pipeline.py pipeline --stages download_audio --all-episodes
+
+# Specify custom audio directory
+python pipeline.py pipeline --stages download_audio --audio-dir "/path/to/audio/files"
 ```
 
-Options:
-- `--stats-only`: View only statistics without updating
-- `--episodes`: Path to episodes JSON file
-- `--transcripts`: Path to transcripts directory
+Flags:
+- `--audio-format`: Audio format to download (e.g., mp3, m4a)
+- `--audio-quality`: Audio quality in kbps (e.g., 192, 256)
+- `--all-episodes`: Include all episodes for audio download, not just full episodes
+- `--audio-dir`: Directory for storing downloaded audio files
 
-#### 8. Identify Speakers
+#### Transcription Options
 
 ```bash
-python identify_speakers.py
+# Customize transcription settings
+python pipeline.py pipeline --stages transcribe_audio --model nova-3 --no-diarize --detect-language
+
+# Specify custom directories
+python pipeline.py pipeline --stages transcribe_audio --audio-dir "/path/to/audio" --transcripts-dir "/path/to/transcripts"
 ```
 
-Options:
-- `--episode`: Process a specific episode by video ID
-- `--no-llm`: Disable LLM for speaker identification (not recommended)
-- `--llm-provider`: LLM provider to use (default: openai, options: openai, deepseq)
-- `--force-reidentify`: Re-identify speakers even if already identified
+Flags:
+- `--model`: Deepgram model to use for transcription (default: nova-3)
+- `--no-diarize`: Disable speaker diarization during transcription
+- `--no-smart-format`: Disable smart formatting in transcripts
+- `--detect-language`: Enable language detection during transcription
+- `--audio-dir`: Directory containing audio files to transcribe
+- `--transcripts-dir`: Directory for storing transcriptions
+
+#### Speaker Identification Options
+
+```bash
+# Configure speaker identification
+python pipeline.py pipeline --stages identify_speakers --llm-provider openai --force-reidentify
+
+# Disable LLM for speaker identification, use heuristics only
+python pipeline.py pipeline --stages identify_speakers --no-llm
+```
+
+Flags:
+- `--no-llm`: Disable LLM for speaker identification and use heuristics only
+- `--llm-provider`: LLM provider to use for speaker identification (options: openai, deepseq)
+- `--force-reidentify`: Force re-identification of speakers even if already identified
+- `--transcripts-dir`: Directory containing transcripts to process
+
+### Display Command
+
+The `display` command shows transcript content with various formatting options:
+
+```bash
+python pipeline.py display [options]
+```
+
+#### Basic Display Operations
+
+```bash
+# Display transcript in text format
+python pipeline.py display --episode VIDEO_ID
+
+# Display transcript in JSON format
+python pipeline.py display --episode VIDEO_ID --format json
+
+# Hide speaker information
+python pipeline.py display --episode VIDEO_ID --no-speakers
+
+# Show timestamps
+python pipeline.py display --episode VIDEO_ID --show-timestamps
+```
+
+Flags:
+- `--episode`: Video ID of the episode to display (required)
+- `--format`: Display format (options: text, json)
+- `--no-speakers`: Hide speaker information
+- `--show-timestamps`: Show timestamps
+
+### Verify Command
+
+The `verify` command checks transcript metadata and displays statistics:
+
+```bash
+python pipeline.py verify [options]
+```
+
+#### Basic Verification Operations
+
+```bash
+# Verify all transcripts and display statistics
+python pipeline.py verify
+
+# Show only high-level statistics
+python pipeline.py verify --stats-only
+
+# Verify without updating metadata files
+python pipeline.py verify --no-update
+```
+
+Flags:
+- `--stats-only`: Only display statistics without details of missing items
+- `--no-update`: Don't update episode metadata files when inconsistencies are found
+
+### Complete Command Reference
+
+For a complete list of all available options:
+
+```bash
+# Show main help
+python pipeline.py --help
+
+# Show help for a specific command
+python pipeline.py pipeline --help
+python pipeline.py display --help
+python pipeline.py verify --help
+```
 
 ## Services and Modules
 
