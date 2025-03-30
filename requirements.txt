@@ -1,0 +1,9 @@
+yt-dlp==2023.12.30
+google-api-python-client==2.118.0
+google-auth-httplib2==0.1.1
+google-auth-oauthlib==1.2.0
+tqdm==4.66.1
+python-dotenv==1.0.0
+python-youtube==0.9.7
+pytube==15.0.0
+requests==2.32.3 
