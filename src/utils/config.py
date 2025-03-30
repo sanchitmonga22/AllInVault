@@ -19,6 +19,7 @@ class AppConfig:
     data_dir: Path
     audio_dir: Path
     json_dir: Path
+    transcripts_dir: Path
     
     # Download settings
     audio_format: str = "mp3"
@@ -26,6 +27,11 @@ class AppConfig:
     
     # Database settings
     episodes_db_path: Path = None
+    
+    # Transcription settings
+    deepgram_api_key: Optional[str] = None
+    deepgram_language: str = "en-US"
+    deepgram_model: str = "nova"
     
     def __post_init__(self):
         """Post initialization setup."""
@@ -49,14 +55,21 @@ def load_config() -> AppConfig:
     data_dir = Path(os.getenv("DATA_DIR", "data"))
     audio_dir = Path(os.getenv("AUDIO_DIR", data_dir / "audio"))
     json_dir = Path(os.getenv("JSON_DIR", data_dir / "json"))
+    transcripts_dir = Path(os.getenv("TRANSCRIPTS_DIR", data_dir / "transcripts"))
     
     # Create directories if they don't exist
     audio_dir.mkdir(parents=True, exist_ok=True)
     json_dir.mkdir(parents=True, exist_ok=True)
+    transcripts_dir.mkdir(parents=True, exist_ok=True)
     
     # Download settings
     audio_format = os.getenv("AUDIO_FORMAT", "mp3")
     audio_quality = os.getenv("AUDIO_QUALITY", "192")
+    
+    # Transcription settings
+    deepgram_api_key = os.getenv("DEEPGRAM_API_KEY")
+    deepgram_language = os.getenv("DEEPGRAM_LANGUAGE", "en-US")
+    deepgram_model = os.getenv("DEEPGRAM_MODEL", "nova")
     
     return AppConfig(
         youtube_api_key=youtube_api_key,
@@ -64,6 +77,10 @@ def load_config() -> AppConfig:
         data_dir=data_dir,
         audio_dir=audio_dir,
         json_dir=json_dir,
+        transcripts_dir=transcripts_dir,
         audio_format=audio_format,
-        audio_quality=audio_quality
+        audio_quality=audio_quality,
+        deepgram_api_key=deepgram_api_key,
+        deepgram_language=deepgram_language,
+        deepgram_model=deepgram_model
     ) 

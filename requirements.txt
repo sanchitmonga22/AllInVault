@@ -6,4 +6,5 @@ tqdm==4.66.1
 python-dotenv==1.0.0
 python-youtube==0.9.7
 pytube==15.0.0
-requests==2.32.3 
+requests==2.32.3
+deepgram-sdk==2.12.0 
