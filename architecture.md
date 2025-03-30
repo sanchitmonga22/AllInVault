@@ -266,4 +266,195 @@ There was a concern that YouTube information metadata was not getting updated pr
 - **Improved Metadata Integration**: Better synchronization between YouTube and transcript data
 - **Speaker Recognition**: Advanced speaker identification using voice signatures
 - **Content Analysis**: Natural language processing for topic extraction and summarization
-- **Web Interface**: User-friendly interface for browsing and searching transcripts 
+- **Web Interface**: User-friendly interface for browsing and searching transcripts
+
+## Speaker Identification System
+
+The Speaker Identification System is designed to automatically identify and map anonymous speakers in podcast transcripts to their actual names. This is a critical component for making the transcript content searchable and analyzable by speaker.
+
+### Speaker Identification Strategies
+
+The system employs multiple complementary strategies to achieve accurate speaker identification:
+
+1. **LLM-Based Identification (New)**
+   - Uses Large Language Models (OpenAI or DeepSeq) to analyze episode metadata and transcript
+   - Extracts hosts and guests with confidence scores
+   - Provides highly accurate identification from contextual understanding
+   - Configurable through CLI and pipeline service parameters
+
+2. **Metadata-Based Identification**
+   - Extracts potential guest names from episode titles and descriptions
+   - Uses patterns like "with Guest Name" or "featuring Guest Name"
+   - Filters out known hosts to identify unique guests
+
+3. **Self-Introduction Detection**
+   - Identifies speakers introducing themselves with patterns like "I'm [name]" or "This is [name]"
+   - Analyzes intro sections where hosts and guests typically introduce themselves
+   - Assigns high confidence scores to these identifications
+
+4. **Direct Address Analysis**
+   - Detects when one speaker directly addresses another by name
+   - Analyzes response patterns to map speaker IDs to names
+   - Uses frequency analysis to determine the most likely mapping
+
+5. **Speaking Pattern Recognition**
+   - Analyzes linguistic patterns unique to specific speakers
+   - Identifies characteristic filler words and phrases
+   - Measures utterance length and speaking style indicators
+
+6. **Name Mention Analysis**
+   - Observes how speakers refer to others vs. themselves
+   - Uses the insight that people rarely refer to themselves by name
+   - Maps speakers who are frequently mentioned but don't mention themselves
+
+7. **Intro/Outro Context**
+   - Examines podcast introductions and conclusions
+   - Uses the structural patterns of podcast episodes
+   - Identifies hosts who typically begin or end episodes
+
+8. **Cross-Episode Learning**
+   - Maintains speaker history across episodes
+   - Improves identification accuracy over time
+   - Placeholder for future speaker fingerprinting
+
+### LLM Integration Architecture
+
+The LLM integration follows a modular design with:
+
+1. **LLM Service Layer**
+   - Abstract `LLMProvider` interface for different model implementations
+   - Concrete providers for OpenAI and DeepSeq
+   - Configurable models and parameters
+   - Structured JSON output format for consistent processing
+
+2. **Integration with Existing Pipeline**
+   - Optional LLM usage controlled via configuration
+   - LLM identification runs first when enabled
+   - Results are combined with traditional heuristic methods
+   - Confidence scores determine which identification to trust
+
+3. **CLI Configuration**
+   - Command-line parameters for enabling/configuring LLM
+   - Provider selection (OpenAI/DeepSeq)
+   - Model selection for each provider
+   - Filtering options for reviewing results
+
+### Speaker Metadata Structure
+
+Identified speakers are stored in the episode metadata with rich information:
+
+```json
+"speakers": {
+  "0": {
+    "name": "Jason Calacanis",
+    "utterance_count": 120,
+    "confidence": 0.92,
+    "is_guest": false,
+    "is_unknown": false,
+    "identified_by_llm": true
+  },
+  "1": {
+    "name": "Guest Name",
+    "utterance_count": 85,
+    "confidence": 0.78,
+    "is_guest": true,
+    "is_unknown": false,
+    "identified_by_llm": true
+  },
+  "2": {
+    "name": "Unknown Speaker 2",
+    "utterance_count": 5,
+    "confidence": 0.1,
+    "is_guest": false,
+    "is_unknown": true,
+    "identified_by_llm": false
+  }
+}
+```
+
+### Confidence Scoring
+
+The system assigns confidence scores to each identification:
+
+- Each identification strategy contributes to the overall confidence score
+- Higher confidence is given to more reliable methods (LLM, self-introductions, direct address)
+- Identifications below threshold confidence are marked as "Unknown Speaker"
+- Guest speakers are explicitly flagged in the metadata
+
+### Implementation Details
+
+The speaker identification process follows these steps:
+
+1. Extract all unique speaker IDs from the transcript
+2. If enabled, use LLM to identify speakers from episode metadata and transcript sample
+3. Apply traditional identification strategies in sequence, from most to least reliable
+4. Combine evidence from all strategies with weighted confidence scores
+5. For remaining unidentified speakers, apply heuristic defaults based on podcast format
+6. Update episode metadata with detailed speaker information including confidence scores
+
+### Future Enhancements
+
+Planned improvements to the speaker identification system:
+
+1. **Speaker Embedding/Voice Fingerprinting**
+   - Create voice fingerprints for known speakers
+   - Train models to recognize speakers across episodes
+   - Leverage audio characteristics for more accurate identification
+
+2. **Enhanced NLP Analysis**
+   - Use more sophisticated NLP for entity recognition in transcripts
+   - Analyze topic expertise patterns to match with known speakers
+   - Implement advanced contextual analysis
+
+3. **External Knowledge Integration**
+   - Connect with podcast websites and APIs for guest information
+   - Build a growing database of speaker profiles
+   - Integrate with public figure databases
+
+4. **Interactive Feedback Loop**
+   - Allow manual corrections to improve future identifications
+   - Implement active learning from user feedback
+   - Build a continuously improving identification system
+
+## Overall System Architecture
+
+The AllInVault system follows SOLID principles throughout its architecture:
+
+1. **Single Responsibility Principle**: Each component has a well-defined responsibility
+   - Speaker identification service focuses solely on mapping speakers
+   - Episode repository handles persistence
+   - Transcript processing handles text formatting
+
+2. **Open/Closed Principle**: Components are open for extension
+   - New speaker identification strategies can be added without modifying existing code
+   - The confidence scoring system allows for additional evidence sources
+
+3. **Liskov Substitution Principle**: Services use clear interfaces
+   - Alternative identification strategies can be substituted
+   - Different transcript formats can be processed with the same interface
+
+4. **Interface Segregation**: APIs are focused and specific
+   - Speaker identification doesn't depend on unrelated episode features
+   - Clear separation between transcript analysis and metadata handling
+
+5. **Dependency Inversion**: High-level modules depend on abstractions
+   - Processing pipeline depends on abstract interfaces
+   - Services can be swapped with alternative implementations
+
+The system follows a modular architecture with services, repositories, and models clearly separated to maintain clean architecture principles 
+
+```mermaid
+graph TD
+    A[YouTube Data API] -->|Downloads Episode Metadata| B[Podcast Pipeline Service]
+    B -->|Analyzes Episodes| C[Episode Analyzer Service]
+    C -->|Identifies Full Episodes| B
+    B -->|Downloads Audio| D[Downloader Service]
+    D -->|Saves MP3| E[Audio Files]
+    B -->|Transcribes Audio| F[Batch Transcriber Service]
+    F -->|Creates JSON Transcripts| G[Transcript Files]
+    B -->|Identifies Speakers| H[Speaker Identification Service]
+    H -->|Uses LLM| I[LLM Service]
+    I -->|OpenAI Integration| J[OpenAI API]
+    B -->|Updates Metadata| K[Episode Repository]
+    K -->|Stores| L[episodes.json]
+``` 
