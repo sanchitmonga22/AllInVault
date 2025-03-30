@@ -44,8 +44,8 @@ def parse_args():
         help="Force reprocessing of episodes that already have speaker data"
     )
     parser.add_argument(
-        "--use-llm", action="store_true",
-        help="Use LLM (Large Language Model) for speaker identification"
+        "--no-llm", action="store_true",
+        help="Disable LLM for speaker identification (not recommended)"
     )
     parser.add_argument(
         "--llm-provider", type=str, choices=["openai", "deepseq"], default="openai",
@@ -89,7 +89,7 @@ def identify_speakers(args) -> int:
         
         # Set up speaker service
         speaker_service = SpeakerIdentificationService(
-            use_llm=args.use_llm,
+            use_llm=not args.no_llm,
             llm_provider=args.llm_provider,
             llm_model=args.llm_model
         )
@@ -119,6 +119,9 @@ def identify_speakers(args) -> int:
         
         # Process episodes
         logger.info(f"Processing {len(episodes_to_process)} episodes...")
+        if args.no_llm:
+            logger.warning("WARNING: Running without LLM is not recommended as speaker identification relies on LLM")
+        
         num_processed = 0
         
         for episode in episodes_to_process:

@@ -159,6 +159,16 @@ AllInVault/
   - Manages the complete pipeline from download to transcription
   - Provides unified interface for the entire process
 
+### 7. Speaker Identification Service
+
+**Key Components:**
+- `SpeakerIdentificationService`: Identifies speakers in podcast transcripts
+  - Uses LLM integration for accurate speaker identification
+  - Maps anonymous speaker IDs to actual speaker names
+  - Updates episode metadata with speaker information
+  - Handles both hosts and guests identification
+  - Works with OpenAI or DeepSeek LLM providers
+
 ## Data Models
 
 ### PodcastEpisode

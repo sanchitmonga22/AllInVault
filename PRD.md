@@ -106,12 +106,12 @@ The database will include these core tables:
 - Collection of memorable quotes organized by speaker
 - Tagging of investment theses and predictions
 - Categorization into:
-  - Business Ideas
-  - Frameworks
-  - Quotes
+  - Investments Ideas
+  - Predictions
   - Stories
   - Opinions
-  - Products
+  - Politics
+
 - Linking of insights to specific timestamps in episodes
 - Related insights section using semantic similarity
 
@@ -289,20 +289,6 @@ The platform's success will be measured by:
 3. Search relevance and effectiveness
 4. Chat interaction quality and accuracy
 5. User growth and retention rates
-
-## SOLID Principles Implementation
-
-The application architecture follows SOLID principles:
-
-1. **Single Responsibility Principle**: Each component in the system has a single responsibility (e.g., transcription service only handles audio-to-text conversion)
-
-2. **Open/Closed Principle**: Components are open for extension but closed for modification (e.g., insight categorization system can be extended with new categories without changing existing code)
-
-3. **Liskov Substitution Principle**: Services are designed with clear interfaces that allow for alternative implementations (e.g., different transcription services could be swapped in)
-
-4. **Interface Segregation Principle**: Clients are not forced to depend on interfaces they don't use (e.g., search API is separate from content management API)
-
-5. **Dependency Inversion Principle**: High-level modules depend on abstractions, not concrete implementations (e.g., content processing pipeline depends on abstract transcription service interface)
 
 ## Conclusion
 
