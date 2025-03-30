@@ -5,7 +5,7 @@ Service for batch transcription of podcast episodes.
 
 import os
 import json
-from typing import List
+from typing import List, Dict, Optional
 from pathlib import Path
 from src.services.transcription_service import DeepgramTranscriptionService
 from src.models.podcast_episode import PodcastEpisode
@@ -58,9 +58,22 @@ class BatchTranscriberService:
             transcripts_dir
         )
         
-        # Update episodes in repository
+        # Update episodes in repository with transcript information
         for episode in updated_episodes:
-            self.repository.update_episode(episode)
+            # Ensure metadata dictionary exists
+            if not episode.metadata:
+                episode.metadata = {}
+                
+            # Add transcript coverage information if both durations are available
+            if episode.metadata.get('duration_seconds') and episode.transcript_duration:
+                coverage = min(100.0, (episode.transcript_duration / episode.metadata['duration_seconds']) * 100)
+                episode.metadata['transcript_coverage'] = round(coverage, 2)
+                print(f"Episode {episode.video_id}: Transcript coverage: {episode.metadata['transcript_coverage']}%")
+                
+            # Make sure we save the updated episode to the repository
+            success = self.repository.update_episode(episode)
+            if not success:
+                print(f"Warning: Failed to update episode {episode.video_id} in repository")
         
         print("\nTranscription complete!")
         print("="*80)
@@ -81,6 +94,12 @@ class BatchTranscriberService:
         print("\nGenerating readable transcripts...")
         
         for episode_id in episode_ids:
+            # Get episode from repository to include metadata in transcript
+            episode = self.repository.get_episode(episode_id)
+            if not episode:
+                print(f"Warning: Episode {episode_id} not found in repository")
+                continue
+                
             json_path = os.path.join(input_dir, f"{episode_id}.json")
             text_path = os.path.join(output_dir, f"{episode_id}.txt")
             
@@ -93,8 +112,34 @@ class BatchTranscriberService:
                 with open(json_path, 'r') as f:
                     transcript = json.load(f)
                 
+                # Update transcript with episode metadata if needed
+                if not 'episode_metadata' in transcript:
+                    transcript['episode_metadata'] = {
+                        'video_id': episode.video_id,
+                        'title': episode.title,
+                        'published_at': episode.published_at.isoformat(),
+                        'duration': episode.duration,
+                        'duration_seconds': episode.metadata.get('duration_seconds'),
+                        'transcript_duration': episode.transcript_duration,
+                        'transcript_coverage': episode.metadata.get('transcript_coverage')
+                    }
+                    # Save updated transcript
+                    with open(json_path, 'w') as f:
+                        json.dump(transcript, f, indent=2)
+                
                 # Generate readable text
                 with open(text_path, 'w') as f:
+                    # Write episode header with metadata
+                    f.write(f"# {episode.title}\n")
+                    f.write(f"Video ID: {episode.video_id}\n")
+                    f.write(f"Published: {episode.published_at.strftime('%Y-%m-%d')}\n")
+                    if episode.transcript_duration and episode.metadata.get('duration_seconds'):
+                        f.write(f"Duration: {episode.duration} ({episode.metadata.get('duration_seconds')} seconds)\n")
+                        f.write(f"Transcript Duration: {episode.transcript_duration:.2f} seconds\n")
+                        if episode.metadata.get('transcript_coverage'):
+                            f.write(f"Coverage: {episode.metadata.get('transcript_coverage')}%\n")
+                    f.write("\n" + "="*80 + "\n\n")
+                    
                     if ('results' in transcript and 
                         'channels' in transcript['results'] and 
                         transcript['results']['channels'] and
@@ -140,6 +185,9 @@ class BatchTranscriberService:
                         f.write("No transcript data found\n")
                         
                 print(f"Generated readable transcript: {text_path}")
+                
+                # Update the episode in case any metadata was changed
+                self.repository.update_episode(episode)
                 
             except Exception as e:
                 print(f"Error processing transcript for episode {episode_id}: {e}")

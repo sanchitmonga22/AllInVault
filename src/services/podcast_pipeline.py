@@ -158,7 +158,13 @@ class PodcastPipelineService:
         updated_episodes = self.downloader.download_episodes(episode_objects, audio_dir)
         
         # Update repository with audio filenames
-        self.repository.save_episodes(updated_episodes)
+        for episode in updated_episodes:
+            # Preserve metadata from previous versions
+            existing_episode = self.repository.get_episode(episode.video_id)
+            if existing_episode and existing_episode.metadata:
+                episode.metadata = existing_episode.metadata
+            self.repository.save_episode(episode)
+        
         logger.info("Updated metadata with audio filenames")
         
         return updated_episodes
@@ -204,10 +210,39 @@ class PodcastPipelineService:
         for episode in episodes:
             updated_ep = self.repository.get_episode(episode.video_id)
             if updated_ep:
+                # Ensure transcript information is synced with YouTube metadata
+                self._sync_episode_metadata(updated_ep)
                 updated_episodes.append(updated_ep)
         
         logger.info("Transcription complete")
         return updated_episodes
+    
+    def _sync_episode_metadata(self, episode: PodcastEpisode) -> None:
+        """
+        Sync episode metadata between YouTube and transcript information.
+        
+        Args:
+            episode: PodcastEpisode to update
+        """
+        if not episode.metadata:
+            episode.metadata = {}
+            
+        # Calculate transcript coverage if we have both durations
+        if episode.transcript_duration and episode.metadata.get('duration_seconds'):
+            coverage = min(100.0, (episode.transcript_duration / episode.metadata['duration_seconds']) * 100)
+            episode.metadata['transcript_coverage'] = round(coverage, 2)
+            
+            # Add speaker information if available
+            if episode.transcript_utterances and not episode.speaker_count:
+                # Try to estimate from transcript content
+                # In future: could analyze transcript file to get exact count
+                episode.speaker_count = min(4, max(1, episode.transcript_utterances // 10))
+                
+            # Save the updated episode
+            self.repository.update_episode(episode)
+            logger.info(f"Updated metadata for episode {episode.video_id}: " 
+                       f"Coverage: {episode.metadata['transcript_coverage']}%, "
+                       f"Speakers: {episode.speaker_count}")
     
     def run_pipeline(self, num_episodes: int = 5, download_audio: bool = True, transcribe: bool = True) -> None:
         """
@@ -248,13 +283,25 @@ class PodcastPipelineService:
         else:
             logger.warning("No episodes with audio available for transcription")
         
-        logger.info("Pipeline execution complete")
+        logger.info("Pipeline complete!")
 
-# Command-line interface
 def main():
-    """Run the pipeline as a standalone script."""
+    """Run the podcast pipeline as a standalone script."""
+    from argparse import ArgumentParser
+    
+    parser = ArgumentParser(description="Process podcast episodes from YouTube")
+    parser.add_argument("--limit", "-l", type=int, default=5, help="Number of episodes to process")
+    parser.add_argument("--skip-download", "-s", action="store_true", help="Skip audio download")
+    parser.add_argument("--skip-transcribe", "-t", action="store_true", help="Skip transcription")
+    
+    args = parser.parse_args()
+    
     pipeline = PodcastPipelineService()
-    pipeline.run_pipeline()
+    pipeline.run_pipeline(
+        num_episodes=args.limit,
+        download_audio=not args.skip_download,
+        transcribe=not args.skip_transcribe
+    )
 
 if __name__ == "__main__":
     main() 

@@ -2,7 +2,7 @@
 
 ## System Overview
 
-AllInVault is a podcast analysis platform designed to retrieve, process, and transcribe podcast episodes. The system is modular and follows SOLID principles to ensure maintainability, scalability, and extensibility.
+AllInVault is a comprehensive podcast analysis platform designed to download, process, transcribe, and analyze podcast episodes. The system follows a modular, service-oriented architecture that adheres to SOLID principles for maintainability and extensibility.
 
 ## Core Components
 
@@ -37,8 +37,7 @@ AllInVault/
 │   │   ├── download_podcast_cmd.py  # CLI for podcast download
 │   │   ├── process_podcast_cmd.py   # CLI for full pipeline
 │   │   ├── transcribe_audio_cmd.py  # CLI for audio transcription
-│   │   ├── transcribe_full_episodes_cmd.py # CLI for batch transcription
-│   │   └── verify_transcripts.py    # CLI for transcript verification 
+│   │   └── transcribe_full_episodes_cmd.py # CLI for batch transcription
 │   ├── models/                 # Data models
 │   │   └── podcast_episode.py  # Podcast episode model
 │   ├── repositories/           # Data access layer
@@ -60,6 +59,57 @@ AllInVault/
 └── transcribe_full_episodes.py # Entry point for batch transcription
 ```
 
+## Data Flow and Integration
+
+### YouTube to Transcript Information Flow
+
+1. **YouTube Metadata Retrieval**:
+   - `YouTubeService` fetches podcast episode metadata from YouTube API
+   - Extracts key information: title, description, duration, publish date, statistics
+
+2. **Episode Analysis**:
+   - `EpisodeAnalyzerService` categorizes episodes as FULL or SHORT based on duration
+   - Updates metadata in the repository with duration in seconds and episode type
+
+3. **Audio Processing**:
+   - `DownloaderService` downloads audio files for selected episodes
+   - Audio files are stored in the audio directory with standardized filenames
+   - Episode objects are updated with audio_filename references
+
+4. **Transcription**:
+   - `DeepgramTranscriptionService` processes audio files and generates transcripts
+   - Transcript JSON contains detailed information including:
+     - Word-by-word timestamps
+     - Speaker diarization
+     - Utterance boundaries
+     - Full transcript duration
+   - Metadata fields are updated in the episode object:
+     - `transcript_filename`: Path to stored transcript
+     - `transcript_duration`: Duration of the transcribed content in seconds
+     - `transcript_utterances`: Count of utterances in the transcript
+     - `speaker_count`: Number of unique speakers identified
+
+5. **Repository Updates**:
+   - `EpisodeRepository` saves all metadata changes back to persistent storage
+   - Ensures data consistency between YouTube metadata and transcript information
+
+### Critical Integration Points
+
+1. **Duration Synchronization**:
+   - YouTube provides duration in ISO 8601 format (e.g., "PT1H25M30S")
+   - Transcription service provides duration in seconds
+   - `EpisodeAnalyzerService` converts YouTube duration to seconds for comparison
+
+2. **Transcript Completeness**:
+   - System compares `duration_seconds` (from YouTube) with `transcript_duration`
+   - Calculates and stores coverage percentage in episode metadata
+   - Flags incomplete transcripts for further processing
+
+3. **Metadata Enrichment**:
+   - Original YouTube metadata is preserved in the episode model
+   - Transcript-related metadata is added to the same model
+   - Updates are made via repository to ensure persistence
+
 ## Service Layer
 
 ### 1. Episode Retrieval Services
@@ -67,22 +117,24 @@ AllInVault/
 **Key Components:**
 - `YouTubeService`: Fetches podcast episodes from YouTube
   - Retrieves metadata via the YouTube API
-  - Supports filtering by channel
+  - Converts YouTube API responses to `PodcastEpisode` objects
+  - Extracts duration, title, description, and other video metadata
 
 ### 2. Audio Processing Services
 
 **Key Components:**
 - `DownloaderService`: Downloads audio content
-  - Handles YouTube download integration
-  - Manages audio file storage
+  - Uses yt-dlp for efficient YouTube downloads
+  - Handles audio format configuration
+  - Manages file naming and storage
 
 ### 3. Episode Analysis Service
 
 **Key Components:**
 - `EpisodeAnalyzerService`: Analyzes episodes based on metadata
   - Duration-based filtering to separate full episodes from shorts
+  - ISO 8601 duration parsing for accurate duration comparison
   - Detailed episode information and statistics
-  - Used by other services for episode filtering
 
 ### 4. Transcription Services
 
@@ -90,22 +142,13 @@ AllInVault/
 - `TranscriptionService`: Core transcription functionality
   - Speaker diarization to identify different speakers
   - Timestamp generation for utterances
-  - Enhanced transcript completeness verification
   - Transcript metadata enrichment with episode information
 - `DeepgramTranscriptionService`: Implementation using Deepgram API
-  - Enhanced with latest Deepgram options:
-    - Nova-2 model for state-of-the-art accuracy
-    - Smart formatting for improved readability
-    - Advanced diarization for speaker identification
-    - Dictation optimization for conversational content
-    - Punctuation for better transcript flow
-  - Configurable via command-line arguments:
-    - Control over all transcription parameters
-    - Ability to enable/disable specific features
-    - Custom language and model selection
+  - Utilizes Deepgram Nova-3 model for improved accuracy
+  - Configurable transcription parameters
+  - Updates episode objects with transcript information
 - `BatchTranscriberService`: Manages transcription of multiple episodes
-  - Integrates with episode analysis for filtering shorts
-  - Processes only applicable episodes
+  - Coordinates batch processing of episodes
   - Generates both JSON and human-readable transcripts
 
 ### 5. Orchestration Service
@@ -116,129 +159,111 @@ AllInVault/
   - Manages the complete pipeline from download to transcription
   - Provides unified interface for the entire process
 
-### 6. Repository Layer
+## Data Models
+
+### PodcastEpisode
+
+The central data model representing a podcast episode with fields for both YouTube metadata and transcript information:
+
+```
+PodcastEpisode
+├── video_id: str                     # YouTube video ID
+├── title: str                        # Episode title
+├── description: str                  # Episode description
+├── published_at: datetime            # Publication date
+├── channel_id: str                   # YouTube channel ID
+├── channel_title: str                # Channel name
+├── tags: List[str]                   # Video tags
+├── duration: str                     # ISO 8601 duration from YouTube
+├── view_count: int                   # View count
+├── like_count: int                   # Like count
+├── comment_count: int                # Comment count
+├── thumbnail_url: str                # Thumbnail URL
+├── audio_filename: str               # Path to audio file
+├── transcript_filename: str          # Path to transcript file
+├── transcript_duration: float        # Duration of transcript in seconds
+├── transcript_utterances: int        # Number of utterances in transcript
+├── speaker_count: int                # Number of speakers
+└── metadata: Dict                    # Additional metadata
+    ├── type: str                     # FULL or SHORT
+    ├── duration_seconds: int         # Duration in seconds
+    └── coverage_percentage: float    # Transcript coverage
+```
+
+## Repository Layer
 
 **Key Components:**
 - `EpisodeRepository`: Data access for episodes
-  - JSON-based storage
-  - CRUD operations for episode data
-  - Search and filtering capabilities
+  - JSON-based storage for all episode data
+  - CRUD operations for episode management
+  - Ensures data persistence between pipeline stages
 
 ## Command-Line Interface
 
-The system includes multiple command-line interfaces:
+The system provides multiple entry points for different tasks:
 
 1. **Individual Tools**:
    - `analyze_episodes.py`: Analyze and categorize episodes
    - `download_podcast.py`: Download episode metadata and audio
    - `transcribe_audio.py`: Transcribe audio files
    - `transcribe_full_episodes.py`: Batch transcribe full episodes
-   - `display_transcript.py`: View formatted transcripts with completeness information
-   - `verify_transcripts.py`: Verify and update transcript completeness information
+   - `display_transcript.py`: View formatted transcripts
 
 2. **Unified Pipeline**:
    - `process_podcast.py`: Execute the complete pipeline in one command
-     - Download episode metadata
-     - Analyze and filter episodes
-     - Download audio for full episodes only
-     - Generate transcripts
-     - All steps are configurable via command-line arguments
-
-## Data Flow
-
-1. Episode data is retrieved from the podcast source via `YouTubeService`
-2. Episodes are analyzed and categorized via `EpisodeAnalyzerService`
-   - Each episode is marked as FULL or SHORT in the repository
-3. Audio is downloaded for full episodes via `DownloaderService`
-4. Audio is processed through `TranscriptionService`
-5. Batch processing is handled by `BatchTranscriberService`
-6. The entire workflow is orchestrated by `PodcastPipelineService`
-7. All operations update the repository via `EpisodeRepository`
-8. Transcript completeness is verified and episodes are updated with coverage information
-
-## SOLID Principles Implementation
-
-1. **Single Responsibility Principle**: Each service class has a single, well-defined responsibility
-2. **Open/Closed Principle**: Services are designed to be extended without modification
-3. **Liskov Substitution Principle**: Service interfaces allow for interchangeable implementations
-4. **Interface Segregation Principle**: Service interfaces are focused and specific
-5. **Dependency Inversion Principle**: High-level modules depend on abstractions, not details
-
-## Features
-
-- **YouTube Shorts Detection**: Automatically identifies short-form content
-- **Speaker Diarization**: Detects and labels different speakers
-- **Guest Speaker Recognition**: Identifies and labels guest speakers
-- **Transcript Completeness Verification**: Analyzes and reports on transcript coverage
-- **Episode Duration Extraction**: Accurately converts YouTube duration formats to seconds
-- **Batch Processing**: Efficient processing of multiple episodes
-- **Unified Pipeline**: Complete workflow automation from a single command
-
-## Transcript Processing System
-
-### Previous Issue
-The transcript processing system had a critical flaw where it was handling demo/sample transcripts without proper labeling. For example, episode "Iazo7g40VbQ" had:
-
-- Episode duration of 1 hour 28 minutes (5280 seconds)
-- A transcript file containing only a 5-minute sample (300 seconds)
-- Only 5 demo utterances instead of the full conversation
-
-### Current Implementation
-
-The system has been redesigned to:
-
-1. **Eliminate Demo Functionality**: 
-   - Removed all demo transcript generation code
-   - System now only works with real transcripts from the API
-   - No more misleading demo/sample transcriptions
-
-2. **Enhanced Completeness Verification**:
-   - Accurate detection of transcript completeness by comparing:
-     - Episode duration (from YouTube API)
-     - Transcript duration (from transcription service)
-   - Calculation of coverage percentage
-   - Clear flagging of incomplete transcripts
-   - Detailed reason for incompleteness
-
-3. **Metadata Enrichment**:
-   - Transcripts now contain episode metadata
-   - Duration information is stored in both ISO 8601 and seconds format
-   - Coverage percentage is stored and displayed
-   - Full publish date and video information is maintained
-
-4. **User Interface Updates**:
-   - Clear display of transcript vs. episode duration
-   - Coverage percentage is prominently shown
-   - Warning indicators for incomplete transcripts
-   - Utterance count and other quality metrics
-
-5. **Verification Tool**:
-   - Added a new `verify_transcripts.py` utility to:
-     - Scan all existing transcripts
-     - Update metadata with episode information
-     - Calculate and store coverage percentages
-     - Generate statistics on transcript completeness
 
 ## System Architecture Diagram
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌────────────────────┐
 │                 │    │                 │    │                    │
-│  Video Source   │───►│ Audio Extractor │───►│ Transcript Service │
+│  YouTube API    │───►│ Audio Download  │───►│ Deepgram API       │
 │                 │    │                 │    │                    │
 └─────────────────┘    └─────────────────┘    └──────────┬─────────┘
-                                                         │
-                                                         ▼
+        │                                                 │
+        │                                                 │
+        ▼                                                 ▼
 ┌─────────────────┐    ┌─────────────────┐    ┌────────────────────┐
 │                 │    │                 │    │                    │
-│   Web Frontend  │◄───│  API Gateway   │◄───│ Verification Layer │
+│ Episode Model   │◄───┤ Repository      │◄───┤ Transcript Model   │
 │                 │    │                 │    │                    │
-└─────────────────┘    └─────────────────┘    └────────────────────┘
+└─────────────────┘    └──────┬──────────┘    └────────────────────┘
+                              │
+                              │
+                      ┌───────▼────────┐
+                      │                │
+                      │ Command-Line   │
+                      │ Interface      │
+                      │                │
+                      └────────────────┘
 ```
+
+## Known Issues and Improvements
+
+### YouTube Metadata and Transcript Integration
+
+There was a concern that YouTube information metadata was not getting updated properly from transcript information. The investigation reveals:
+
+1. **Current Behavior**:
+   - In `transcription_service.py`, the `transcribe_episode` method correctly updates:
+     - `episode.transcript_filename`
+     - `episode.transcript_duration`
+     - `episode.transcript_utterances`
+   
+   - These updates are temporary unless explicitly saved back to the repository
+
+2. **Issue**:
+   - In `batch_transcriber.py`, the episode objects are correctly updated with transcript information
+   - However, in some cases, `self.repository.update_episode(episode)` might not be called or is failing
+
+3. **Solution**:
+   - Ensure all episode updates are properly persisted to the repository
+   - Verify that `PodcastPipelineService.transcribe_audio` properly reloads episodes after transcription
+   - Add explicit repository update calls after critical operations
 
 ## Future Enhancements
 
-- Integration with real-time transcription services
-- Advanced speaker identification using voice characteristics
-- Natural language processing for content analysis
-- User interface for easy interaction with the system 
+- **Improved Metadata Integration**: Better synchronization between YouTube and transcript data
+- **Speaker Recognition**: Advanced speaker identification using voice signatures
+- **Content Analysis**: Natural language processing for topic extraction and summarization
+- **Web Interface**: User-friendly interface for browsing and searching transcripts 

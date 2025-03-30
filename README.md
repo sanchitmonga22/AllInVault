@@ -1,22 +1,15 @@
-# All In Vault - Podcast Downloader and Transcriber
+# All In Vault - Podcast Analysis Platform
 
-This tool downloads the All In podcast episodes as audio files, transcribes them using Deepgram API, and stores their metadata in a local JSON database. It's part of the All In Vault project, which aims to create a searchable knowledge base of podcast content.
+All In Vault is a comprehensive platform for downloading, transcribing, and analyzing the All In podcast episodes. The system retrieves metadata from YouTube, downloads audio files, performs transcription using Deepgram's Nova-3 model, and provides tools for analyzing the content.
 
-## Features
+## Core Features
 
-- Downloads audio for All In podcast episodes
-- Transcribes audio files into detailed text transcripts with timestamps
-- Extracts comprehensive metadata for each episode
-- Stores metadata in a JSON database
-- Configurable audio quality and format
-- Command-line interface with various options
-
-## Prerequisites
-
-- Python 3.8+
-- YouTube API Key
-- Deepgram API Key (for transcription)
-- FFmpeg (for audio extraction)
+- **YouTube Integration**: Retrieves podcast episodes and metadata from YouTube
+- **Audio Processing**: Downloads high-quality audio for transcription
+- **Advanced Transcription**: Uses Deepgram's Nova-3 model with speaker diarization
+- **Metadata Management**: Stores and organizes all podcast metadata
+- **Pipeline Automation**: Complete workflow from retrieval to transcription
+- **Episode Analysis**: Distinguishes between full episodes and shorts
 
 ## Installation
 
@@ -26,129 +19,121 @@ This tool downloads the All In podcast episodes as audio files, transcribes them
    cd allinvault
    ```
 
-2. Install required packages:
+2. Install dependencies:
    ```bash
    pip install -r requirements.txt
    ```
 
-3. Copy the example environment file and edit it:
+3. Configure environment variables:
    ```bash
    cp .env.example .env
-   # Edit .env to add your YouTube API key and Deepgram API key
+   # Edit .env with your API keys
    ```
 
-## Quick Start Guide
+## API Keys
 
-### Step 1: Set Up Your API Keys
+- **YouTube API Key**: Required for fetching episode metadata
+- **Deepgram API Key**: Required for audio transcription
 
-1. Get a YouTube API key from the [Google Cloud Console](https://console.cloud.google.com/).
-2. Get a Deepgram API key from the [Deepgram Console](https://console.deepgram.com/).
-3. Add them to your `.env` file:
-   ```
-   YOUTUBE_API_KEY=your_youtube_api_key_here
-   DEEPGRAM_API_KEY=your_deepgram_api_key_here
-   ```
+## Usage
 
-### Step 2: Download Metadata
+### Complete Pipeline
 
-To download metadata for all episodes:
+Run the entire pipeline with a single command:
+
+```bash
+python process_podcast.py --limit 5
+```
+
+This will:
+1. Fetch the latest 5 episodes from YouTube
+2. Analyze and identify full episodes
+3. Download audio for full episodes
+4. Transcribe the audio using Deepgram
+
+### Individual Steps
+
+#### 1. Download Episode Metadata
 
 ```bash
 python download_podcast.py --info-only
 ```
 
-This will fetch metadata for all episodes and store it in `data/json/episodes.json`.
-
-To limit the number of episodes:
+#### 2. Analyze Episodes
 
 ```bash
-python download_podcast.py --info-only --limit 10
+python analyze_episodes.py
 ```
 
-### Step 3: Download Audio Files
-
-To download both metadata and audio files:
+#### 3. Download Audio
 
 ```bash
 python download_podcast.py
 ```
 
-Or with a limit:
-
-```bash
-python download_podcast.py --limit 5
-```
-
-**Note**: Due to YouTube's restrictions on programmatic downloading, the current implementation creates placeholder files instead of actual audio content. In a production environment, you would need an alternative approach to obtain the audio files.
-
-### Step 4: Transcribe Audio Files
-
-To transcribe downloaded audio files:
+#### 4. Transcribe Audio
 
 ```bash
 python transcribe_audio.py
 ```
 
-This will transcribe all episodes that have audio files and store the transcripts in `data/transcripts/`.
-
-To transcribe a specific episode by its video ID:
+#### 5. Display Transcripts
 
 ```bash
-python transcribe_audio.py --episode VIDEO_ID
+python display_transcript.py --episode VIDEO_ID
 ```
 
-Or with a limit:
+#### 6. Verify and Update Metadata
+
+The system includes a verification tool to ensure YouTube metadata and transcript information are properly integrated:
 
 ```bash
-python transcribe_audio.py --limit 3
+# Verify and update all episodes
+python verify_transcripts.py
+
+# View only statistics without updating
+python verify_transcripts.py --stats-only
+
+# Specify custom paths
+python verify_transcripts.py --episodes path/to/episodes.json --transcripts path/to/transcripts
 ```
+
+This script:
+- Updates transcript metadata for better integration with YouTube data
+- Calculates coverage percentages for transcripts
+- Adds missing duration information
+- Generates statistics about your transcription progress
 
 ## Command-Line Options
 
-### Download Podcast Script
+Each script supports various options:
 
-- `-l, --limit`: Limit the number of episodes to download
-- `-i, --info-only`: Only fetch metadata without downloading audio
-- `-f, --format`: Audio format (default: mp3)
-- `-q, --quality`: Audio quality in kbps (default: 192)
-
-### Transcribe Audio Script
-
-- `-l, --limit`: Limit the number of episodes to transcribe
-- `-e, --episode`: Transcribe only a specific episode by video ID
-- `--language`: Language code for transcription (default: en-US)
-- `--model`: Deepgram model to use (default: nova)
+- `--limit`: Number of episodes to process
+- `--info-only`: Only fetch metadata (for download_podcast.py)
+- `--episode`: Process a specific episode by video ID
+- `--format`: Audio format (mp3, m4a, etc.)
+- `--quality`: Audio quality in kbps
 
 ## Project Structure
 
 ```
 allinvault/
-├── data/              # Data storage directory
-│   ├── audio/         # Downloaded audio files
-│   ├── json/          # JSON database files
-│   └── transcripts/   # Transcripts of audio files
-├── src/               # Source code
-│   ├── models/        # Data models
-│   ├── repositories/  # Data storage layers
-│   ├── services/      # Business logic services
-│   └── utils/         # Utility functions
-├── .env.example       # Example environment variables
-├── download_podcast.py # Main download script
-├── transcribe_audio.py # Transcription script
-├── README.md          # Project documentation
-└── requirements.txt   # Python dependencies
+├── data/                      # Data storage
+│   ├── audio/                 # Downloaded audio files
+│   ├── json/                  # Metadata storage
+│   └── transcripts/           # Transcript storage
+├── src/                       # Source code
+│   ├── cli/                   # Command-line interfaces
+│   ├── models/                # Data models
+│   ├── repositories/          # Data access layer
+│   ├── services/              # Business logic
+│   └── utils/                 # Utilities
+└── *.py                       # Entry point scripts
 ```
 
 ## Architecture
 
-The project follows SOLID principles with a modular architecture:
-
-- **Models Layer**: Data representation for podcast episodes
-- **Services Layer**: Business logic for YouTube API, audio downloads, and transcription
-- **Repository Layer**: Data storage and retrieval
-- **Utils Layer**: Configuration and helper functions
-
-See `architecture.md` for a detailed description of the architecture.
+The project follows a modular, service-oriented architecture adhering to SOLID principles. See `architecture.md` for detailed documentation.
 
 ## License
 
