@@ -21,6 +21,7 @@ from src.services.downloader_service import YtDlpDownloader
 from src.services.episode_analyzer import EpisodeAnalyzerService
 from src.services.batch_transcriber import BatchTranscriberService
 from src.utils.config import load_config, AppConfig
+from src.services.speaker_identification_service import SpeakerIdentificationService
 
 # Configure logging
 logging.basicConfig(
@@ -40,7 +41,10 @@ class PodcastPipelineService:
     def __init__(
         self,
         config: Optional[AppConfig] = None,
-        min_duration_seconds: int = 120
+        min_duration_seconds: int = 120,
+        speaker_service: Optional[SpeakerIdentificationService] = None,
+        use_llm_for_speakers: bool = True,
+        llm_provider: str = "openai"
     ):
         """
         Initialize the podcast pipeline service.
@@ -48,6 +52,9 @@ class PodcastPipelineService:
         Args:
             config: Application configuration
             min_duration_seconds: Minimum duration for a full episode (in seconds)
+            speaker_service: Optional service for speaker identification
+            use_llm_for_speakers: Whether to use LLM for speaker identification
+            llm_provider: LLM provider to use ('openai' or 'deepseq')
         """
         self.config = config or load_config()
         self.min_duration_seconds = min_duration_seconds
@@ -63,6 +70,21 @@ class PodcastPipelineService:
         
         # Initialize repository
         self.repository = JsonFileRepository(str(self.config.episodes_db_path))
+        
+        # Initialize speaker identification service if not provided
+        if speaker_service is None:
+            self.speaker_service = SpeakerIdentificationService(
+                use_llm=use_llm_for_speakers,
+                llm_provider=llm_provider
+            )
+        else:
+            self.speaker_service = speaker_service
+        
+        # Flags to track which parts of the pipeline have been executed
+        self._downloaded_metadata = False
+        self._downloaded_audio = False
+        self._transcribed_audio = False
+        self._identified_speakers = False
     
     def fetch_episodes(self, limit: Optional[int] = None) -> List[PodcastEpisode]:
         """
@@ -215,6 +237,11 @@ class PodcastPipelineService:
                 updated_episodes.append(updated_ep)
         
         logger.info("Transcription complete")
+        
+        # Identify speakers after transcription
+        if updated_episodes:
+            self.identify_speakers(updated_episodes, transcripts_path)
+        
         return updated_episodes
     
     def _sync_episode_metadata(self, episode: PodcastEpisode) -> None:
@@ -244,46 +271,185 @@ class PodcastPipelineService:
                        f"Coverage: {episode.metadata['transcript_coverage']}%, "
                        f"Speakers: {episode.speaker_count}")
     
-    def run_pipeline(self, num_episodes: int = 5, download_audio: bool = True, transcribe: bool = True) -> None:
+    def identify_speakers(
+        self,
+        episodes: Optional[List[PodcastEpisode]] = None,
+        transcripts_dir: str = "data/transcripts",
+        force_reidentify: bool = False
+    ) -> List[PodcastEpisode]:
         """
-        Run the full podcast processing pipeline.
+        Identify speakers in podcast episodes.
         
         Args:
-            num_episodes: Maximum number of episodes to process
-            download_audio: Whether to download audio files
-            transcribe: Whether to transcribe audio files
+            episodes: List of episodes to process (if None, will use all episodes)
+            transcripts_dir: Directory containing transcript files
+            force_reidentify: Whether to force reidentification of speakers even if already done
+            
+        Returns:
+            List of updated episodes
         """
-        logger.info(f"Starting podcast pipeline with {num_episodes} episodes")
+        logger.info("Starting speaker identification process")
         
-        # Step 1: Fetch episode metadata
-        self.fetch_episodes(num_episodes)
+        # Get episodes if not provided
+        if episodes is None:
+            episodes = self.repository.get_all_episodes()
         
-        # Step 2: Analyze episodes to identify full episodes vs shorts
-        full_episodes, _ = self.analyze_episodes(limit=num_episodes)
+        # Filter episodes that have transcripts
+        episodes_to_process = []
+        for episode in episodes:
+            if episode.transcript_filename:
+                if force_reidentify or not episode.metadata or "speakers" not in episode.metadata:
+                    episodes_to_process.append(episode)
         
-        # Step 3: Download audio for full episodes
-        if download_audio:
-            updated_episodes = self.download_audio(full_episodes)
-        else:
-            logger.info("Skipping audio download")
-            # Get episode objects from repository
-            updated_episodes = []
-            for ep in full_episodes:
-                ep_obj = self.repository.get_episode(ep['video_id'])
-                if ep_obj and ep_obj.audio_filename:
-                    updated_episodes.append(ep_obj)
+        if not episodes_to_process:
+            logger.info("No episodes to process for speaker identification")
+            return []
         
-        # Step 4: Transcribe audio
-        if transcribe and updated_episodes:
-            logger.info(f"Transcribing {len(updated_episodes)} episodes")
-            transcribed_episodes = self.transcribe_audio(updated_episodes)
-            logger.info(f"Transcribed {len(transcribed_episodes)} episodes")
-        elif not transcribe:
-            logger.info("Skipping transcription")
-        else:
-            logger.warning("No episodes with audio available for transcription")
+        logger.info(f"Identifying speakers in {len(episodes_to_process)} episodes")
+        updated_episodes = []
         
-        logger.info("Pipeline complete!")
+        for episode in episodes_to_process:
+            try:
+                logger.info(f"Processing episode: {episode.title}")
+                # Process transcript to identify speakers
+                updated_episode = self.speaker_service.process_episode(episode, transcripts_dir)
+                
+                # Save updated episode
+                self.repository.update_episode(updated_episode)
+                updated_episodes.append(updated_episode)
+                
+                # Log identified speakers
+                if "speakers" in updated_episode.metadata:
+                    logger.info(f"Speakers identified in {updated_episode.title}:")
+                    for speaker_id, speaker_info in updated_episode.metadata["speakers"].items():
+                        name = speaker_info["name"]
+                        confidence = speaker_info.get("confidence", 0)
+                        utterances = speaker_info.get("utterance_count", 0)
+                        is_unknown = speaker_info.get("is_unknown", False)
+                        is_guest = speaker_info.get("is_guest", False)
+                        
+                        speaker_type = "GUEST" if is_guest else "HOST"
+                        if is_unknown:
+                            speaker_type = "UNKNOWN"
+                        
+                        logger.info(f"  Speaker {speaker_id}: {name} "
+                                  f"({speaker_type}, confidence: {confidence:.2f}, "
+                                  f"utterances: {utterances})")
+            except Exception as e:
+                logger.error(f"Error processing episode {episode.video_id}: {e}")
+        
+        self._identified_speakers = True
+        logger.info(f"Speaker identification completed for {len(updated_episodes)} episodes")
+        
+        return updated_episodes
+    
+    def run_pipeline(
+        self, 
+        num_episodes: int = 5, 
+        download_audio: bool = True, 
+        transcribe: bool = True,
+        identify_speakers: bool = True,
+        use_llm_for_speakers: bool = True
+    ) -> None:
+        """
+        Run the entire podcast processing pipeline.
+        
+        Args:
+            num_episodes: Number of episodes to process
+            download_audio: Whether to download audio
+            transcribe: Whether to transcribe audio
+            identify_speakers: Whether to identify speakers
+            use_llm_for_speakers: Whether to use LLM for speaker identification
+        """
+        try:
+            # Step 1: Fetch episodes
+            if not self._downloaded_metadata:
+                logger.info(f"Fetching up to {num_episodes} episodes")
+                self.fetch_episodes(num_episodes)
+                self._downloaded_metadata = True
+            else:
+                logger.info("Using previously downloaded metadata")
+            
+            # Step 2: Analyze episodes
+            if not self._downloaded_audio:
+                logger.info("Analyzing episodes to identify full episodes")
+                full_episodes, _ = self.analyze_episodes(limit=num_episodes)
+                
+                # Step 3: Download audio for full episodes
+                if download_audio:
+                    logger.info("Downloading audio for full episodes")
+                    # Limit to num_episodes
+                    if len(full_episodes) > num_episodes:
+                        full_episodes = full_episodes[:num_episodes]
+                    self.download_audio(full_episodes)
+                    self._downloaded_audio = True
+                else:
+                    logger.info("Skipping audio download (--skip-download flag used)")
+            else:
+                logger.info("Using previously downloaded audio")
+            
+            # Step 4: Transcribe audio
+            episodes_with_audio = []
+            all_episodes = self.repository.get_all_episodes()
+            for episode in all_episodes:
+                if episode.audio_filename:
+                    # Check that audio file actually exists
+                    audio_path = os.path.join(self.config.audio_dir, episode.audio_filename)
+                    if os.path.exists(audio_path):
+                        episodes_with_audio.append(episode)
+                    
+                    # Limit to num_episodes
+                    if len(episodes_with_audio) >= num_episodes:
+                        break
+            
+            if transcribe and not self._transcribed_audio and episodes_with_audio:
+                logger.info(f"Transcribing {len(episodes_with_audio)} episodes")
+                self.transcribe_audio(episodes_with_audio)
+                self._transcribed_audio = True
+            elif not transcribe:
+                logger.info("Skipping transcription (--skip-transcription flag used)")
+            elif self._transcribed_audio:
+                logger.info("Using previously generated transcripts")
+            else:
+                logger.info("No episodes with audio found for transcription")
+            
+            # Step 5: Identify speakers in transcripts
+            episodes_with_transcripts = []
+            all_episodes = self.repository.get_all_episodes()
+            for episode in all_episodes:
+                if episode.transcript_filename:
+                    # Check that transcript file actually exists
+                    transcript_path = os.path.join(self.config.transcripts_dir, episode.transcript_filename)
+                    if os.path.exists(transcript_path):
+                        episodes_with_transcripts.append(episode)
+                    
+                    # Limit to num_episodes
+                    if len(episodes_with_transcripts) >= num_episodes:
+                        break
+            
+            if identify_speakers and not self._identified_speakers and episodes_with_transcripts:
+                # Configure the speaker service if needed
+                if use_llm_for_speakers != self.speaker_service.use_llm:
+                    self.speaker_service = SpeakerIdentificationService(
+                        use_llm=use_llm_for_speakers,
+                        llm_provider="openai"
+                    )
+                
+                logger.info(f"Identifying speakers in {len(episodes_with_transcripts)} episodes")
+                self.identify_speakers(episodes_with_transcripts)
+                self._identified_speakers = True
+            elif not identify_speakers:
+                logger.info("Skipping speaker identification")
+            elif self._identified_speakers:
+                logger.info("Using previously identified speakers")
+            else:
+                logger.info("No episodes with transcripts found for speaker identification")
+            
+            logger.info("Pipeline execution completed")
+            
+        except Exception as e:
+            logger.error(f"Error in pipeline execution: {e}")
+            raise
 
 def main():
     """Run the podcast pipeline as a standalone script."""
