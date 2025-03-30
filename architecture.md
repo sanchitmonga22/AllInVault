@@ -1,230 +1,167 @@
-# All In Vault Architecture
-
-This document outlines the architecture of the All In Vault podcast downloader and database system, following SOLID principles for a modular and maintainable design.
+# AllInVault Architecture
 
 ## System Overview
 
-The All In Vault system is designed to:
-1. Fetch metadata for All In podcast episodes via YouTube API
-2. Download audio content from these episodes
-3. Transcribe audio files into text with timestamps and speaker identification
-4. Store metadata, audio file references, and transcripts in a local database
-5. Enable easy retrieval and search of episodes
+AllInVault is a podcast analysis platform designed to retrieve, process, and transcribe podcast episodes. The system is modular and follows SOLID principles to ensure maintainability, scalability, and extensibility.
 
-## Architecture Diagram
+## Core Components
 
 ```
-┌───────────────────────────────────────────────────────────────────┐
-│                      download_podcast.py (Main Application)        │
-└───────────────────────┬─────────────────┬─────────────────────────┘
-                        │                 │
-                        ▼                 ▼
-┌───────────────────────────────────────────────────────────────────┐
-│                      transcribe_audio.py (Transcription App)       │
-└───────────────────────┬─────────────────┬─────────────────────────┘
-                        │                 │
-                        ▼                 ▼
-┌───────────────────────────┐   ┌───────────────────────────────────┐
-│   Configuration (Utils)    │   │           Command Line            │
-│                           │   │          Arguments Parser          │
-└───────────────────────────┘   └───────────────────────────────────┘
-                        │                 │
-                        └────────┬────────┘
-                                 ▼
-┌────────────────────────┬──────────────────┬──────────────────────┬──────────────────────┐
-│                        │                  │                      │                      │
-▼                        ▼                  ▼                      ▼                      ▼
-┌────────────────┐  ┌──────────────┐  ┌─────────────┐  ┌───────────────┐  ┌──────────────┐
-│  YouTube API   │  │  Downloader  │  │  Episode    │  │ Data Models   │  │ Transcription │
-│   Service      │──▶   Service    │──▶ Repository  │◀─┤ (PodcastEpisode) │◀─│   Service    │
-│ (Interface)    │  │ (Interface)  │  │ (Interface) │  │               │  │ (Interface)  │
-└────────┬───────┘  └──────┬───────┘  └─────┬───────┘  └───────────────┘  └──────┬───────┘
-         │                 │                 │                                    │
-         ▼                 ▼                 ▼                                    ▼
-┌────────────────┐  ┌──────────────┐  ┌─────────────┐                     ┌──────────────┐
-│ YouTube        │  │ YtDlp        │  │ JSON File   │                     │ Deepgram     │
-│ Service        │  │ Downloader   │  │ Repository  │                     │ Transcription│
-│ Implementation │  │ Implementation│  │Implementation│                     │ Implementation│
-└────────────────┘  └──────────────┘  └─────────────┘                     └──────────────┘
-         │                 │                 │                                    │
-         └────────┬────────┘                 │                                    │
-                  │                          │                                    │
-                  ▼                          ▼                                    ▼
-         ┌────────────────┐         ┌────────────────┐                    ┌──────────────┐
-         │ YouTube Data   │         │  JSON Database │                    │ Deepgram API │
-         │    API         │         │     File       │                    │              │
-         └────────────────┘         └────────────────┘                    └──────────────┘
+┌───────────────────┐     ┌─────────────────┐     ┌───────────────────┐
+│                   │     │                 │     │                   │
+│  Episode Retrieval│─────▶ Audio Processing│─────▶    Transcription  │
+│                   │     │                 │     │                   │
+└───────────────────┘     └─────────────────┘     └───────────────────┘
+          │                       │                        │
+          │                       │                        │
+          ▼                       ▼                        ▼
+┌───────────────────┐     ┌─────────────────┐     ┌───────────────────┐
+│                   │     │                 │     │                   │
+│  Metadata Storage │     │  Audio Storage  │     │ Transcript Storage│
+│                   │     │                 │     │                   │
+└───────────────────┘     └─────────────────┘     └───────────────────┘
 ```
 
-## Component Description
+## Project Structure
 
-### 1. Models Layer
+```
+AllInVault/
+├── data/                       # Data storage
+│   ├── audio/                  # Downloaded audio files
+│   ├── json/                   # Metadata storage
+│   └── transcripts/            # Transcript storage
+├── src/                        # Source code
+│   ├── cli/                    # Command-line interfaces
+│   │   ├── analyze_episodes_cmd.py  # CLI for episode analysis
+│   │   ├── display_transcript_cmd.py # CLI for transcript display
+│   │   ├── download_podcast_cmd.py  # CLI for podcast download
+│   │   ├── process_podcast_cmd.py   # CLI for full pipeline
+│   │   ├── transcribe_audio_cmd.py  # CLI for audio transcription
+│   │   └── transcribe_full_episodes_cmd.py # CLI for batch transcription
+│   ├── models/                 # Data models
+│   │   └── podcast_episode.py  # Podcast episode model
+│   ├── repositories/           # Data access layer
+│   │   └── episode_repository.py # Episode repository
+│   ├── services/               # Business logic
+│   │   ├── youtube_service.py  # YouTube API service
+│   │   ├── downloader_service.py # Audio downloader service
+│   │   ├── transcription_service.py # Transcription service
+│   │   ├── episode_analyzer.py # Episode analysis service
+│   │   ├── batch_transcriber.py # Batch transcription service
+│   │   └── podcast_pipeline.py # Full pipeline orchestration
+│   └── utils/                  # Utilities
+│       └── config.py           # Configuration utilities
+├── analyze_episodes.py         # Entry point for episode analysis
+├── display_transcript.py       # Entry point for transcript display
+├── download_podcast.py         # Entry point for podcast download
+├── process_podcast.py          # Entry point for full pipeline
+├── transcribe_audio.py         # Entry point for audio transcription
+└── transcribe_full_episodes.py # Entry point for batch transcription
+```
 
-**PodcastEpisode** - Data model representing a podcast episode with metadata
+## Service Layer
 
-- Responsibilities:
-  - Define the structure of episode data
-  - Provide serialization/deserialization methods
-  - Maintain clean data representations
-  - Store transcription metadata
+### 1. Episode Retrieval Services
 
-### 2. Services Layer
+**Key Components:**
+- `YouTubeService`: Fetches podcast episodes from YouTube
+  - Retrieves metadata via the YouTube API
+  - Supports filtering by channel
 
-#### YouTube Service
+### 2. Audio Processing Services
 
-- Interface: `YouTubeServiceInterface`
-- Implementation: `YouTubeService`
-- Responsibilities:
-  - Interact with YouTube API
-  - Fetch metadata for podcast episodes
-  - Extract relevant information
-  - Map API responses to domain models
+**Key Components:**
+- `DownloaderService`: Downloads audio content
+  - Handles YouTube download integration
+  - Manages audio file storage
 
-#### Downloader Service
+### 3. Episode Analysis Service
 
-- Interface: `DownloaderServiceInterface`
-- Implementation: `YtDlpDownloader`
-- Responsibilities:
-  - Download audio from YouTube videos
-  - Extract and process audio content
-  - Save files to appropriate locations
-  - Update metadata with file references
+**Key Components:**
+- `EpisodeAnalyzerService`: Analyzes episodes based on metadata
+  - Duration-based filtering to separate full episodes from shorts
+  - Detailed episode information and statistics
+  - Used by other services for episode filtering
 
-#### Transcription Service
+### 4. Transcription Services
 
-- Interface: `TranscriptionServiceInterface`
-- Implementation: `DeepgramTranscriptionService`
-- Responsibilities:
-  - Convert audio files to text transcripts
-  - Extract timestamps and speaker information
-  - Process and format transcript data
-  - Save transcripts to appropriate locations
-  - Update metadata with transcript references
+**Key Components:**
+- `TranscriptionService`: Core transcription functionality
+  - Speaker diarization to identify different speakers
+  - Timestamp generation for utterances
+  - Support for demo mode without actual audio processing
+- `BatchTranscriberService`: Manages transcription of multiple episodes
+  - Integrates with episode analysis for filtering shorts
+  - Processes only applicable episodes
+  - Generates both JSON and human-readable transcripts
 
-### 3. Repository Layer
+### 5. Orchestration Service
 
-- Interface: `EpisodeRepositoryInterface`
-- Implementation: `JsonFileRepository`
-- Responsibilities:
-  - Store and retrieve episode data
-  - Provide search functionality
-  - Maintain data consistency
-  - Abstract storage implementation details
+**Key Components:**
+- `PodcastPipelineService`: Orchestrates the entire workflow
+  - Coordinates all other services in sequence
+  - Manages the complete pipeline from download to transcription
+  - Provides unified interface for the entire process
 
-### 4. Utilities Layer
+### 6. Repository Layer
 
-- `AppConfig` - Configuration management
-- Responsible for:
-  - Loading environment variables
-  - Setting up directories
-  - Managing application settings
+**Key Components:**
+- `EpisodeRepository`: Data access for episodes
+  - JSON-based storage
+  - CRUD operations for episode data
+  - Search and filtering capabilities
 
-### 5. Main Applications
+## Command-Line Interface
 
-- `download_podcast.py`
-- Responsibilities:
-  - Parse command-line arguments
-  - Orchestrate service interactions for downloading
-  - Handle error cases
-  - Provide user feedback
+The system includes multiple command-line interfaces:
 
-- `transcribe_audio.py`
-- Responsibilities:
-  - Parse command-line arguments
-  - Orchestrate service interactions for transcription
-  - Handle error cases
-  - Provide user feedback
+1. **Individual Tools**:
+   - `analyze_episodes.py`: Analyze and categorize episodes
+   - `download_podcast.py`: Download episode metadata and audio
+   - `transcribe_audio.py`: Transcribe audio files
+   - `transcribe_full_episodes.py`: Batch transcribe full episodes
+   - `display_transcript.py`: View formatted transcripts
 
-- `display_transcript.py`
-- Responsibilities:
-  - Parse command-line arguments
-  - Format transcript data for human readability
-  - Display or save formatted transcripts
-  - Convert JSON transcripts to readable text format
-
-## SOLID Principles Implementation
-
-### 1. Single Responsibility Principle
-
-Each class has a single responsibility:
-- `PodcastEpisode` - Represent episode data
-- `YouTubeService` - Interact with YouTube API
-- `YtDlpDownloader` - Download and process audio
-- `DeepgramTranscriptionService` - Transcribe audio files
-- `JsonFileRepository` - Store and retrieve data
-
-### 2. Open/Closed Principle
-
-Components are designed to be extended without modification:
-- New downloader implementations can be added without changing clients
-- New repository types can be created without modifying services
-- New transcription service implementations can be added
-- New search methods can be added to repositories
-
-### 3. Liskov Substitution Principle
-
-Interface implementations are interchangeable:
-- Any `DownloaderServiceInterface` implementation can be used
-- Any `YouTubeServiceInterface` implementation can be used
-- Any `TranscriptionServiceInterface` implementation can be used
-- Any `EpisodeRepositoryInterface` implementation can be used
-
-### 4. Interface Segregation Principle
-
-Interfaces are focused and minimal:
-- `YouTubeServiceInterface` only includes methods for YouTube API
-- `DownloaderServiceInterface` only includes methods for downloading
-- `TranscriptionServiceInterface` only includes methods for transcription
-- `EpisodeRepositoryInterface` only includes data access methods
-
-### 5. Dependency Inversion Principle
-
-High-level modules depend on abstractions:
-- Main scripts depend on interfaces, not concrete implementations
-- Services can be replaced with alternative implementations
-- Data storage can be changed without affecting business logic
+2. **Unified Pipeline**:
+   - `process_podcast.py`: Execute the complete pipeline in one command
+     - Download episode metadata
+     - Analyze and filter episodes
+     - Download audio for full episodes only
+     - Generate transcripts
+     - All steps are configurable via command-line arguments
 
 ## Data Flow
 
-### Downloading Flow
-1. User initiates download process via command line
-2. Main script initializes services with configuration
-3. YouTube service fetches episode metadata
-4. Episode metadata is saved to repository
-5. If audio download is requested, downloader service processes episodes
-6. Downloaded audio references are updated in metadata
-7. Repository saves updated metadata
+1. Episode data is retrieved from the podcast source via `YouTubeService`
+2. Episodes are analyzed and categorized via `EpisodeAnalyzerService`
+   - Each episode is marked as FULL or SHORT in the repository
+3. Audio is downloaded for full episodes via `DownloaderService`
+4. Audio is processed through `TranscriptionService`
+5. Batch processing is handled by `BatchTranscriberService`
+6. The entire workflow is orchestrated by `PodcastPipelineService`
+7. All operations update the repository via `EpisodeRepository`
 
-### Transcription Flow
-1. User initiates transcription process via command line
-2. Transcription script loads episodes from repository
-3. For each episode with audio:
-   a. Audio file is processed by transcription service
-   b. Transcript is saved to file
-   c. Transcript reference is updated in episode metadata
-4. Updated episode metadata is saved to repository
+## SOLID Principles Implementation
 
-## Future Extensions
+1. **Single Responsibility Principle**: Each service class has a single, well-defined responsibility
+2. **Open/Closed Principle**: Services are designed to be extended without modification
+3. **Liskov Substitution Principle**: Service interfaces allow for interchangeable implementations
+4. **Interface Segregation Principle**: Service interfaces are focused and specific
+5. **Dependency Inversion Principle**: High-level modules depend on abstractions, not details
 
-The modular architecture allows for these potential extensions:
+## Features
 
-1. **Alternative Data Storage**:
-   - Database Repository (SQL, NoSQL)
-   - Cloud Storage Repository
+- **YouTube Shorts Detection**: Automatically identifies short-form content
+- **Speaker Diarization**: Detects and labels different speakers
+- **Guest Speaker Recognition**: Identifies and labels guest speakers
+- **Custom Episode Support**: Allows creation of custom episodes for testing
+- **Demo Mode**: Enables testing without actual audio processing
+- **Batch Processing**: Efficient processing of multiple episodes
+- **Unified Pipeline**: Complete workflow automation from a single command
 
-2. **Additional Download Sources**:
-   - RSS Feed Service
-   - Other podcast platforms
+## Future Enhancements
 
-3. **Processing Extensions**:
-   - Alternative Transcription Services
-   - Audio Analysis Service
-   - Metadata Enrichment Service
-   - Semantic Analysis of Transcripts
-
-4. **User Interfaces**:
-   - Web Interface
-   - GUI Application
-   - Search Interface for Transcripts
-
-These extensions can be implemented by adding new service interfaces and implementations while maintaining the existing architecture. 
+- Integration with real-time transcription services
+- Advanced speaker identification using voice characteristics
+- Natural language processing for content analysis
+- User interface for easy interaction with the system 

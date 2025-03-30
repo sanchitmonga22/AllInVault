@@ -1,0 +1,250 @@
+#!/usr/bin/env python3
+"""
+Podcast Pipeline Service - Orchestrates the entire podcast processing workflow.
+
+This service coordinates:
+1. Episode retrieval from YouTube
+2. Episode analysis to identify full episodes vs shorts
+3. Audio download for full episodes
+4. Transcription of downloaded audio
+"""
+
+import os
+import sys
+from typing import List, Dict, Optional, Tuple
+import logging
+
+from src.models.podcast_episode import PodcastEpisode
+from src.repositories.episode_repository import JsonFileRepository
+from src.services.youtube_service import YouTubeService
+from src.services.downloader_service import PytubeDownloader
+from src.services.episode_analyzer import EpisodeAnalyzerService
+from src.services.batch_transcriber import BatchTranscriberService
+from src.utils.config import load_config, AppConfig
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger("PodcastPipeline")
+
+class PodcastPipelineService:
+    """
+    Service to orchestrate the entire podcast processing pipeline.
+    """
+    
+    def __init__(
+        self,
+        config: Optional[AppConfig] = None,
+        min_duration_seconds: int = 120,
+        use_demo_mode: bool = False
+    ):
+        """
+        Initialize the podcast pipeline service.
+        
+        Args:
+            config: Application configuration
+            min_duration_seconds: Minimum duration for a full episode (in seconds)
+            use_demo_mode: Whether to use demo mode for transcription
+        """
+        self.config = config or load_config()
+        self.min_duration_seconds = min_duration_seconds
+        self.use_demo_mode = use_demo_mode
+        
+        # Initialize services
+        self.youtube_service = YouTubeService(self.config.youtube_api_key)
+        self.downloader = PytubeDownloader(
+            format=self.config.audio_format, 
+            quality=self.config.audio_quality
+        )
+        self.analyzer = EpisodeAnalyzerService(min_duration=self.min_duration_seconds)
+        self.batch_transcriber = BatchTranscriberService(
+            min_duration=self.min_duration_seconds,
+            use_demo_mode=self.use_demo_mode
+        )
+        
+        # Initialize repository
+        self.repository = JsonFileRepository(str(self.config.episodes_db_path))
+    
+    def fetch_episodes(self, limit: Optional[int] = None) -> List[PodcastEpisode]:
+        """
+        Fetch episodes metadata from YouTube.
+        
+        Args:
+            limit: Maximum number of episodes to fetch
+            
+        Returns:
+            List of podcast episodes
+        """
+        logger.info(f"Fetching episodes for channel ID: {self.config.all_in_channel_id}")
+        
+        # Get episodes from YouTube
+        episodes = self.youtube_service.get_all_episodes(
+            self.config.all_in_channel_id,
+            max_results=limit
+        )
+        
+        logger.info(f"Found {len(episodes)} episodes")
+        
+        # Save episodes metadata to repository
+        self.repository.save_episodes(episodes)
+        logger.info(f"Saved episode metadata to {self.config.episodes_db_path}")
+        
+        return episodes
+    
+    def analyze_episodes(self, episodes_json_path: Optional[str] = None, limit: int = 0) -> Tuple[List[PodcastEpisode], List[PodcastEpisode]]:
+        """
+        Analyze episodes to identify full episodes vs shorts.
+        
+        Args:
+            episodes_json_path: Path to the episodes JSON file (optional)
+            limit: Maximum number of episodes to analyze (0 for all)
+            
+        Returns:
+            Tuple of (full_episodes, shorts)
+        """
+        path = episodes_json_path or str(self.config.episodes_db_path)
+        
+        logger.info(f"Analyzing episodes from {path}")
+        full_episodes, shorts = self.analyzer.analyze_episodes(path, limit)
+        
+        logger.info(f"Analysis complete: {len(full_episodes)} full episodes, {len(shorts)} shorts")
+        
+        # Add episode type to each episode in the repository
+        for episode in full_episodes:
+            episode_obj = self.repository.get_episode(episode['video_id'])
+            if episode_obj:
+                episode_obj.metadata = episode_obj.metadata or {}
+                episode_obj.metadata['type'] = 'FULL'
+                episode_obj.metadata['duration_seconds'] = episode.get('duration_seconds')
+                self.repository.save_episode(episode_obj)
+        
+        for episode in shorts:
+            episode_obj = self.repository.get_episode(episode['video_id'])
+            if episode_obj:
+                episode_obj.metadata = episode_obj.metadata or {}
+                episode_obj.metadata['type'] = 'SHORT'
+                episode_obj.metadata['duration_seconds'] = episode.get('duration_seconds')
+                self.repository.save_episode(episode_obj)
+        
+        logger.info("Episode types updated in repository")
+        
+        return full_episodes, shorts
+    
+    def download_audio(self, episodes: List[Dict], output_dir: Optional[str] = None) -> List[PodcastEpisode]:
+        """
+        Download audio for the specified episodes.
+        
+        Args:
+            episodes: List of episode dictionaries
+            output_dir: Directory to save audio files
+            
+        Returns:
+            List of updated podcast episodes
+        """
+        audio_dir = output_dir or str(self.config.audio_dir)
+        
+        logger.info(f"Downloading audio for {len(episodes)} episodes to {audio_dir}")
+        
+        # Convert dicts to PodcastEpisode objects if needed
+        episode_objects = []
+        for ep in episodes:
+            if isinstance(ep, dict):
+                episode_obj = self.repository.get_episode(ep['video_id'])
+                if episode_obj:
+                    episode_objects.append(episode_obj)
+            else:
+                episode_objects.append(ep)
+        
+        # Download audio
+        updated_episodes = self.downloader.download_episodes(episode_objects, audio_dir)
+        
+        # Update repository with audio filenames
+        self.repository.save_episodes(updated_episodes)
+        logger.info("Updated metadata with audio filenames")
+        
+        return updated_episodes
+    
+    def transcribe_audio(
+        self, 
+        episodes: List[PodcastEpisode], 
+        audio_dir: Optional[str] = None,
+        transcripts_dir: Optional[str] = None
+    ) -> List[PodcastEpisode]:
+        """
+        Transcribe audio for the specified episodes.
+        
+        Args:
+            episodes: List of podcast episodes
+            audio_dir: Directory containing audio files
+            transcripts_dir: Directory to save transcripts
+            
+        Returns:
+            List of updated podcast episodes
+        """
+        audio_path = audio_dir or str(self.config.audio_dir)
+        transcripts_path = transcripts_dir or str(self.config.transcripts_dir)
+        
+        logger.info(f"Transcribing {len(episodes)} episodes")
+        
+        # Indicate if running in demo mode
+        if self.use_demo_mode:
+            logger.info("Running in DEMO MODE: Will generate sample transcripts without real audio processing")
+        
+        # Use the batch transcriber service to handle transcription
+        episode_ids = [ep.video_id for ep in episodes]
+        self.batch_transcriber.transcribe_episodes(episode_ids)
+        self.batch_transcriber.generate_readable_transcripts(episode_ids)
+        
+        # Get the updated episodes from the repository
+        updated_episodes = [self.repository.get_episode(ep_id) for ep_id in episode_ids]
+        
+        logger.info("Transcription complete")
+        
+        return [ep for ep in updated_episodes if ep]
+    
+    def run_pipeline(self, num_episodes: int = 5, download_audio: bool = True, transcribe: bool = True) -> None:
+        """
+        Run the entire podcast pipeline.
+        
+        Args:
+            num_episodes: Number of episodes to process
+            download_audio: Whether to download audio files
+            transcribe: Whether to transcribe audio files
+        """
+        logger.info(f"Starting podcast pipeline with {num_episodes} episodes")
+        
+        # 1. Fetch episodes metadata
+        episodes = self.fetch_episodes(limit=num_episodes)
+        
+        # 2. Analyze episodes to identify full episodes vs shorts
+        full_episodes, shorts = self.analyze_episodes(limit=num_episodes)
+        
+        # 3. Download audio for full episodes
+        if download_audio:
+            downloaded_episodes = self.download_audio(full_episodes)
+        else:
+            logger.info("Skipping audio download")
+            downloaded_episodes = [self.repository.get_episode(ep['video_id']) for ep in full_episodes]
+        
+        # 4. Transcribe downloaded audio
+        if transcribe:
+            if downloaded_episodes:
+                transcribed_episodes = self.transcribe_audio([ep for ep in downloaded_episodes if ep])
+                logger.info(f"Transcribed {len(transcribed_episodes)} episodes")
+            else:
+                logger.warning("No episodes to transcribe")
+        else:
+            logger.info("Skipping transcription")
+        
+        logger.info("Pipeline execution complete")
+
+
+# For testing
+if __name__ == "__main__":
+    pipeline = PodcastPipelineService(use_demo_mode=True)
+    pipeline.run_pipeline(num_episodes=3) 

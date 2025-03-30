@@ -34,6 +34,11 @@ class EpisodeRepositoryInterface(ABC):
     def search_episodes(self, query: str) -> List[PodcastEpisode]:
         """Search for episodes matching a query."""
         pass
+    
+    @abstractmethod
+    def update_episode(self, episode: PodcastEpisode) -> bool:
+        """Update an existing episode in the repository. Returns True if successful."""
+        pass
 
 
 class JsonFileRepository(EpisodeRepositoryInterface):
@@ -98,6 +103,19 @@ class JsonFileRepository(EpisodeRepositoryInterface):
                 data["episodes"].append(episode.to_dict())
         
         self._write_data(data)
+    
+    def update_episode(self, episode: PodcastEpisode) -> bool:
+        """Update an existing episode in the repository."""
+        data = self._read_data()
+        
+        for i, existing in enumerate(data["episodes"]):
+            if existing["video_id"] == episode.video_id:
+                data["episodes"][i] = episode.to_dict()
+                self._write_data(data)
+                return True
+        
+        # Episode wasn't found
+        return False
     
     def get_episode(self, video_id: str) -> Optional[PodcastEpisode]:
         """Get an episode by video ID."""

@@ -23,6 +23,7 @@ class PodcastEpisode:
     transcript_duration: Optional[float] = None
     transcript_utterances: Optional[int] = None
     speaker_count: Optional[int] = None
+    metadata: Dict = field(default_factory=dict)
     
     def to_dict(self) -> Dict:
         """Convert the episode to a dictionary for serialization."""
@@ -43,7 +44,8 @@ class PodcastEpisode:
             "transcript_filename": self.transcript_filename,
             "transcript_duration": self.transcript_duration,
             "transcript_utterances": self.transcript_utterances,
-            "speaker_count": self.speaker_count
+            "speaker_count": self.speaker_count,
+            "metadata": self.metadata
         }
     
     @classmethod
@@ -51,4 +53,9 @@ class PodcastEpisode:
         """Create an episode from a dictionary."""
         if isinstance(data["published_at"], str):
             data["published_at"] = datetime.fromisoformat(data["published_at"])
+        
+        # Handle metadata field for backward compatibility
+        if "metadata" not in data:
+            data["metadata"] = {}
+            
         return cls(**data) 

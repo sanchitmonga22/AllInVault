@@ -253,6 +253,7 @@ dmypy.json
 # Project specific
 data/audio/
 data/json/
+data/transcripts/
 *.mp3
 *.m4a
 *.wav
