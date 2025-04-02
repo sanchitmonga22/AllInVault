@@ -18,12 +18,14 @@ class AppConfig:
     # Paths
     data_dir: Path
     audio_dir: Path
+    webm_dir: Path  # Directory for storing webm files before conversion
     json_dir: Path
     transcripts_dir: Path
     
     # Download settings
     audio_format: str = "mp3"
     audio_quality: str = "192"
+    conversion_threads: int = 4  # Number of parallel threads for conversion
     
     # Database settings
     episodes_db_path: Path = None
@@ -54,17 +56,20 @@ def load_config() -> AppConfig:
     # Set up directories
     data_dir = Path(os.getenv("DATA_DIR", "data"))
     audio_dir = Path(os.getenv("AUDIO_DIR", data_dir / "audio"))
+    webm_dir = Path(os.getenv("WEBM_DIR", data_dir / "webm"))  # New webm directory
     json_dir = Path(os.getenv("JSON_DIR", data_dir / "json"))
     transcripts_dir = Path(os.getenv("TRANSCRIPTS_DIR", data_dir / "transcripts"))
     
     # Create directories if they don't exist
     audio_dir.mkdir(parents=True, exist_ok=True)
+    webm_dir.mkdir(parents=True, exist_ok=True)  # Create webm directory
     json_dir.mkdir(parents=True, exist_ok=True)
     transcripts_dir.mkdir(parents=True, exist_ok=True)
     
     # Download settings
     audio_format = os.getenv("AUDIO_FORMAT", "mp3")
     audio_quality = os.getenv("AUDIO_QUALITY", "192")
+    conversion_threads = int(os.getenv("CONVERSION_THREADS", "4"))
     
     # Transcription settings
     deepgram_api_key = os.getenv("DEEPGRAM_API_KEY")
@@ -76,10 +81,12 @@ def load_config() -> AppConfig:
         all_in_channel_id=all_in_channel_id,
         data_dir=data_dir,
         audio_dir=audio_dir,
+        webm_dir=webm_dir,
         json_dir=json_dir,
         transcripts_dir=transcripts_dir,
         audio_format=audio_format,
         audio_quality=audio_quality,
+        conversion_threads=conversion_threads,
         deepgram_api_key=deepgram_api_key,
         deepgram_language=deepgram_language,
         deepgram_model=deepgram_model

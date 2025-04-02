@@ -238,20 +238,20 @@ def main():
     stage_group.add_argument(
         "--stages", 
         type=str,
-        help="Comma-separated list of stages to execute (options: fetch_metadata, analyze_episodes, download_audio, transcribe_audio, identify_speakers)"
+        help="Comma-separated list of stages to execute (options: fetch_metadata, analyze_episodes, download_audio, convert_audio, transcribe_audio, identify_speakers)"
     )
     
     stage_group.add_argument(
         "--start-stage", 
         type=str,
-        choices=["fetch_metadata", "analyze_episodes", "download_audio", "transcribe_audio", "identify_speakers"],
+        choices=["fetch_metadata", "analyze_episodes", "download_audio", "convert_audio", "transcribe_audio", "identify_speakers"],
         help="First stage to execute in the pipeline"
     )
     
     stage_group.add_argument(
         "--end-stage", 
         type=str,
-        choices=["fetch_metadata", "analyze_episodes", "download_audio", "transcribe_audio", "identify_speakers"],
+        choices=["fetch_metadata", "analyze_episodes", "download_audio", "convert_audio", "transcribe_audio", "identify_speakers"],
         help="Last stage to execute in the pipeline"
     )
     
@@ -294,27 +294,40 @@ def main():
     
     download_group = pipeline_parser.add_argument_group("Download Audio Stage")
     download_group.add_argument(
-        "--audio-dir", 
+        "--webm-dir", 
         type=str,
-        help="Directory for storing downloaded audio files"
-    )
-    
-    download_group.add_argument(
-        "--audio-format", 
-        type=str,
-        help="Audio format to download (e.g., mp3, m4a)"
-    )
-    
-    download_group.add_argument(
-        "--audio-quality", 
-        type=str,
-        help="Audio quality to download (e.g., 192)"
+        help="Directory for storing downloaded WebM files"
     )
     
     download_group.add_argument(
         "--all-episodes", 
         action="store_true",
         help="Include all episodes for audio download, not just full episodes"
+    )
+    
+    convert_group = pipeline_parser.add_argument_group("Convert Audio Stage")
+    convert_group.add_argument(
+        "--audio-dir", 
+        type=str,
+        help="Directory for storing converted audio files"
+    )
+    
+    convert_group.add_argument(
+        "--audio-format", 
+        type=str,
+        help="Audio format to convert to (e.g., mp3, m4a)"
+    )
+    
+    convert_group.add_argument(
+        "--audio-quality", 
+        type=str,
+        help="Audio quality for conversion (e.g., 192)"
+    )
+    
+    convert_group.add_argument(
+        "--max-workers", 
+        type=int,
+        help="Maximum number of parallel conversion processes"
     )
     
     transcribe_group = pipeline_parser.add_argument_group("Transcribe Audio Stage")
@@ -522,13 +535,21 @@ def build_stage_kwargs(args):
     kwargs['min_duration'] = args.min_duration
     
     # Download audio stage
+    if args.webm_dir:
+        kwargs['output_dir'] = args.webm_dir
+    kwargs['full_episodes_only'] = not args.all_episodes
+    
+    # Convert audio stage
     if args.audio_dir:
-        kwargs['output_dir'] = args.audio_dir
+        kwargs['mp3_dir'] = args.audio_dir
+    if args.webm_dir:
+        kwargs['webm_dir'] = args.webm_dir
     if args.audio_format:
         kwargs['audio_format'] = args.audio_format
     if args.audio_quality:
         kwargs['audio_quality'] = args.audio_quality
-    kwargs['full_episodes_only'] = not args.all_episodes
+    if args.max_workers:
+        kwargs['max_workers'] = args.max_workers
     
     # Transcribe audio stage
     if args.transcripts_dir:

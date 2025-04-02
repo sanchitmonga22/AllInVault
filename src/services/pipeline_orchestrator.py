@@ -41,6 +41,7 @@ class PipelineStage(Enum):
     FETCH_METADATA = auto()
     ANALYZE_EPISODES = auto()
     DOWNLOAD_AUDIO = auto()
+    CONVERT_AUDIO = auto()
     TRANSCRIBE_AUDIO = auto()
     IDENTIFY_SPEAKERS = auto()
 
@@ -233,35 +234,24 @@ class DownloadAudioStage(AbstractStage):
     def __init__(self, repository: JsonFileRepository, config: AppConfig):
         super().__init__(PipelineStage.DOWNLOAD_AUDIO, repository, config)
         self.dependencies.add(PipelineStage.ANALYZE_EPISODES)
-        self.downloader = YtDlpDownloader(
-            format=self.config.audio_format, 
-            quality=self.config.audio_quality
-        )
+        self.downloader = YtDlpDownloader()
     
     def execute(self, episode_ids: Optional[List[str]] = None, **kwargs) -> StageResult:
         """
-        Download audio for episodes.
+        Download audio for episodes in WebM format.
         
         Args:
             episode_ids: List of video IDs to download, or None to process all full episodes
             **kwargs:
-                output_dir: Directory to save audio files
+                output_dir: Directory to save WebM files
                 full_episodes_only: Whether to only download for full episodes
-                audio_format: Audio format to download
-                audio_quality: Audio quality setting
                 
         Returns:
             StageResult containing the updated episode objects
         """
         try:
-            output_dir = kwargs.get('output_dir', str(self.config.audio_dir))
+            output_dir = kwargs.get('output_dir', str(self.config.webm_dir))
             full_episodes_only = kwargs.get('full_episodes_only', True)
-            
-            # Update downloader settings if provided
-            if 'audio_format' in kwargs or 'audio_quality' in kwargs:
-                audio_format = kwargs.get('audio_format', self.config.audio_format)
-                audio_quality = kwargs.get('audio_quality', self.config.audio_quality)
-                self.downloader = YtDlpDownloader(format=audio_format, quality=audio_quality)
             
             # Determine which episodes to download
             if episode_ids and len(episode_ids) > 0:
@@ -288,22 +278,22 @@ class DownloadAudioStage(AbstractStage):
             
             logger.info(f"Downloading audio for {len(episodes_to_download)} episodes to {output_dir}")
             
-            # Download audio
+            # Download audio in WebM format
             updated_episodes = self.downloader.download_episodes(episodes_to_download, output_dir)
             
-            # Update repository with audio filenames
+            # Update repository with webm filenames
             for episode in updated_episodes:
                 existing_episode = self.repository.get_episode(episode.video_id)
                 if existing_episode and existing_episode.metadata:
                     episode.metadata = existing_episode.metadata
                 self.repository.save_episode(episode)
             
-            logger.info("Updated metadata with audio filenames")
+            logger.info("Updated metadata with WebM filenames")
             
             return StageResult(
                 success=True, 
                 data=updated_episodes, 
-                message=f"Successfully downloaded audio for {len(updated_episodes)} episodes"
+                message=f"Successfully downloaded WebM files for {len(updated_episodes)} episodes"
             )
             
         except Exception as e:
@@ -311,12 +301,94 @@ class DownloadAudioStage(AbstractStage):
             return StageResult(success=False, error=e, message=f"Failed to download audio: {str(e)}")
 
 
+class ConvertAudioStage(AbstractStage):
+    """Stage for converting WebM audio files to MP3."""
+    
+    def __init__(self, repository: JsonFileRepository, config: AppConfig):
+        super().__init__(PipelineStage.CONVERT_AUDIO, repository, config)
+        self.dependencies.add(PipelineStage.DOWNLOAD_AUDIO)
+        self.downloader = YtDlpDownloader(
+            format=self.config.audio_format, 
+            quality=self.config.audio_quality
+        )
+    
+    def execute(self, episode_ids: Optional[List[str]] = None, **kwargs) -> StageResult:
+        """
+        Convert WebM audio files to MP3 format.
+        
+        Args:
+            episode_ids: List of video IDs to convert, or None to process all episodes with WebM files
+            **kwargs:
+                webm_dir: Directory containing WebM files
+                mp3_dir: Directory to save MP3 files
+                audio_format: Target audio format
+                audio_quality: Audio quality
+                max_workers: Maximum number of parallel conversion processes
+                delete_webm: Whether to delete WebM files after conversion
+                
+        Returns:
+            StageResult containing the updated episode objects
+        """
+        try:
+            webm_dir = kwargs.get('webm_dir', str(self.config.webm_dir))
+            mp3_dir = kwargs.get('mp3_dir', str(self.config.audio_dir))
+            audio_format = kwargs.get('audio_format', self.config.audio_format)
+            audio_quality = kwargs.get('audio_quality', self.config.audio_quality)
+            max_workers = kwargs.get('max_workers', self.config.conversion_threads)
+            
+            # Determine which episodes to convert
+            if episode_ids and len(episode_ids) > 0:
+                logger.info(f"Converting audio for specific episodes: {episode_ids}")
+                episodes_to_convert = []
+                for video_id in episode_ids:
+                    episode = self.repository.get_episode(video_id)
+                    if episode and episode.webm_filename:
+                        episodes_to_convert.append(episode)
+            else:
+                # Get all episodes with WebM files
+                logger.info("Converting audio for all episodes with WebM files")
+                all_episodes = self.repository.get_all_episodes()
+                episodes_to_convert = [ep for ep in all_episodes if ep.webm_filename]
+            
+            if not episodes_to_convert:
+                logger.warning("No episodes to convert")
+                return StageResult(success=True, data=[], message="No episodes to convert")
+            
+            logger.info(f"Converting {len(episodes_to_convert)} episodes from WebM to {audio_format}")
+            
+            # Convert WebM to MP3 in parallel
+            updated_episodes = self.downloader.convert_episodes(
+                episodes_to_convert, 
+                webm_dir, 
+                mp3_dir, 
+                audio_format, 
+                audio_quality, 
+                max_workers
+            )
+            
+            # Update repository with MP3 filenames
+            for episode in updated_episodes:
+                self.repository.save_episode(episode)
+            
+            logger.info(f"Updated metadata with {audio_format} filenames")
+            
+            return StageResult(
+                success=True, 
+                data=updated_episodes, 
+                message=f"Successfully converted {len(updated_episodes)} episodes to {audio_format}"
+            )
+            
+        except Exception as e:
+            logger.error(f"Error converting audio: {str(e)}")
+            return StageResult(success=False, error=e, message=f"Failed to convert audio: {str(e)}")
+
+
 class TranscribeAudioStage(AbstractStage):
     """Stage for transcribing audio files."""
     
     def __init__(self, repository: JsonFileRepository, config: AppConfig):
         super().__init__(PipelineStage.TRANSCRIBE_AUDIO, repository, config)
-        self.dependencies.add(PipelineStage.DOWNLOAD_AUDIO)
+        self.dependencies.add(PipelineStage.CONVERT_AUDIO)
         self.batch_transcriber = BatchTranscriberService()
     
     def execute(self, episode_ids: Optional[List[str]] = None, **kwargs) -> StageResult:
@@ -496,6 +568,7 @@ class PipelineOrchestrator:
             PipelineStage.FETCH_METADATA: FetchMetadataStage(self.repository, self.config),
             PipelineStage.ANALYZE_EPISODES: AnalyzeEpisodesStage(self.repository, self.config),
             PipelineStage.DOWNLOAD_AUDIO: DownloadAudioStage(self.repository, self.config),
+            PipelineStage.CONVERT_AUDIO: ConvertAudioStage(self.repository, self.config),
             PipelineStage.TRANSCRIBE_AUDIO: TranscribeAudioStage(self.repository, self.config),
             PipelineStage.IDENTIFY_SPEAKERS: IdentifySpeakersStage(self.repository, self.config)
         }
@@ -505,94 +578,121 @@ class PipelineOrchestrator:
     
     def execute_stage(
         self, 
-        stage: PipelineStage, 
+        stage: PipelineStage,
         episode_ids: Optional[List[str]] = None,
         check_dependencies: bool = True,
         **kwargs
     ) -> StageResult:
         """
-        Execute a specific pipeline stage.
+        Execute a single pipeline stage.
         
         Args:
-            stage: The pipeline stage to execute
-            episode_ids: List of video IDs to process, or None for all episodes
+            stage: Stage to execute
+            episode_ids: List of video IDs to process
             check_dependencies: Whether to check and execute dependencies first
-            **kwargs: Additional arguments for the stage execution
+            **kwargs: Additional arguments for stage execution
             
         Returns:
-            StageResult containing the result of the stage execution
+            StageResult containing the result of stage execution
         """
-        logger.info(f"Executing stage: {stage.name}")
-        
+        # Check if we have an implementation for this stage
+        if stage not in self.stages:
+            return StageResult(
+                success=False, 
+                message=f"No implementation found for stage {stage.name}"
+            )
+            
+        # Check dependencies if required
         if check_dependencies:
-            # Check if dependencies need to be executed first
-            stage_obj = self.stages[stage]
-            for dep_stage in stage_obj.dependencies:
-                if dep_stage not in self.stage_results or not self.stage_results[dep_stage].success:
-                    logger.info(f"Executing dependency stage: {dep_stage.name}")
-                    dep_result = self.execute_stage(dep_stage, episode_ids, True, **kwargs)
+            dependencies = self.stages[stage].dependencies
+            if dependencies:
+                logger.info(f"Checking dependencies for {stage.name}: {[d.name for d in dependencies]}")
+                
+                for dep_stage in dependencies:
+                    # If we've already executed this dependency, skip it
+                    if dep_stage in self.stage_results and self.stage_results[dep_stage].success:
+                        continue
+                        
+                    logger.info(f"Executing dependency: {dep_stage.name}")
+                    dep_result = self.execute_stage(dep_stage, episode_ids, check_dependencies, **kwargs)
+                    self.stage_results[dep_stage] = dep_result
+                    
                     if not dep_result.success:
-                        logger.error(f"Dependency stage {dep_stage.name} failed, cannot continue")
                         return StageResult(
                             success=False, 
-                            message=f"Dependency stage {dep_stage.name} failed: {dep_result.message}"
+                            message=f"Dependency {dep_stage.name} failed: {dep_result.message}",
+                            error=dep_result.error
                         )
         
-        # Execute the requested stage
-        result = self.stages[stage].execute(episode_ids, **kwargs)
-        self.stage_results[stage] = result
-        
-        if result.success:
-            logger.info(f"Stage {stage.name} completed successfully: {result.message}")
-        else:
-            logger.error(f"Stage {stage.name} failed: {result.message}")
-        
-        return result
+        # Execute this stage
+        try:
+            return self.stages[stage].execute(episode_ids, **kwargs)
+        except Exception as e:
+            logger.error(f"Error executing stage {stage.name}: {str(e)}")
+            return StageResult(success=False, error=e, message=f"Exception during execution: {str(e)}")
     
     def execute_pipeline(
-        self,
+        self, 
         start_stage: Optional[PipelineStage] = None,
         end_stage: Optional[PipelineStage] = None,
         episode_ids: Optional[List[str]] = None,
         **kwargs
     ) -> Dict[PipelineStage, StageResult]:
         """
-        Execute a sequence of pipeline stages.
+        Execute the pipeline from start_stage to end_stage.
         
         Args:
-            start_stage: The first stage to execute (default: FETCH_METADATA)
-            end_stage: The last stage to execute (default: IDENTIFY_SPEAKERS)
-            episode_ids: List of video IDs to process, or None for all episodes
-            **kwargs: Additional arguments for stage executions
+            start_stage: Starting stage of the pipeline, or None for first stage
+            end_stage: Ending stage of the pipeline, or None for last stage
+            episode_ids: Optional list of episode IDs to process
+            **kwargs: Keyword arguments to pass to stages
             
         Returns:
-            Dictionary of stage results
+            Dictionary mapping stages to their results
         """
-        # Reset stage results
-        self.stage_results = {}
-        
-        # Determine stage range
-        all_stages = list(PipelineStage)
-        start_idx = 0 if start_stage is None else all_stages.index(start_stage)
-        end_idx = len(all_stages) - 1 if end_stage is None else all_stages.index(end_stage)
-        
-        if start_idx > end_idx:
-            logger.error(f"Invalid stage range: {start_stage} to {end_stage}")
-            return self.stage_results
-        
-        # Execute stages in sequence
-        for i in range(start_idx, end_idx + 1):
-            current_stage = all_stages[i]
-            logger.info(f"Executing pipeline stage {i+1}/{end_idx-start_idx+1}: {current_stage.name}")
+        # Determine pipeline stages to execute
+        if start_stage is None:
+            start_stage = PipelineStage.FETCH_METADATA
             
-            result = self.execute_stage(current_stage, episode_ids, False, **kwargs)
-            self.stage_results[current_stage] = result
+        if end_stage is None:
+            end_stage = PipelineStage.IDENTIFY_SPEAKERS
             
-            if not result.success:
-                logger.error(f"Pipeline execution stopped at stage {current_stage.name}: {result.message}")
+        # Get all stages in the pipeline
+        all_stages = [
+            PipelineStage.FETCH_METADATA,
+            PipelineStage.ANALYZE_EPISODES,
+            PipelineStage.DOWNLOAD_AUDIO,
+            PipelineStage.CONVERT_AUDIO,
+            PipelineStage.TRANSCRIBE_AUDIO,
+            PipelineStage.IDENTIFY_SPEAKERS
+        ]
+        
+        # Determine the slice of stages to execute
+        start_idx = all_stages.index(start_stage)
+        end_idx = all_stages.index(end_stage)
+        stages_to_execute = all_stages[start_idx:end_idx+1]
+        
+        logger.info(f"Executing pipeline from {start_stage.name} to {end_stage.name}")
+        
+        # Execute the stages
+        results = {}
+        for stage in stages_to_execute:
+            try:
+                logger.info(f"Executing stage: {stage.name}")
+                result = self.execute_stage(stage, episode_ids, **kwargs)
+                results[stage] = result
+                self.stage_results[stage] = result
+                
+                if not result.success:
+                    logger.error(f"Stage {stage.name} failed: {result.message}")
+                    break
+                    
+            except Exception as e:
+                logger.error(f"Error executing stage {stage.name}: {str(e)}")
+                results[stage] = StageResult(success=False, error=e, message=f"Failed to execute stage: {str(e)}")
                 break
-        
-        return self.stage_results
+                
+        return results
 
 
 def main():

@@ -18,7 +18,8 @@ class PodcastEpisode:
     like_count: Optional[int] = None
     comment_count: Optional[int] = None
     thumbnail_url: Optional[str] = None
-    audio_filename: Optional[str] = None
+    webm_filename: Optional[str] = None  # Filename for webm (raw downloaded) file
+    audio_filename: Optional[str] = None  # Filename for converted mp3 file
     transcript_filename: Optional[str] = None
     transcript_duration: Optional[float] = None
     transcript_utterances: Optional[int] = None
@@ -40,6 +41,7 @@ class PodcastEpisode:
             "like_count": self.like_count,
             "comment_count": self.comment_count,
             "thumbnail_url": self.thumbnail_url,
+            "webm_filename": self.webm_filename,
             "audio_filename": self.audio_filename,
             "transcript_filename": self.transcript_filename,
             "transcript_duration": self.transcript_duration,
