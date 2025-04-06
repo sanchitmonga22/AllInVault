@@ -8,6 +8,7 @@ from transcripts to actual speaker names, using an LLM.
 import json
 import os
 import logging
+import re
 from typing import Dict, List, Optional
 from pathlib import Path
 
@@ -69,6 +70,28 @@ class SpeakerIdentificationService:
         except Exception as e:
             logger.error(f"Error loading transcript: {e}")
             return {}
+
+    def load_transcript_text(self, transcript_path: str) -> str:
+        """
+        Load transcript text from file.
+        
+        Args:
+            transcript_path: Path to the transcript text file
+            
+        Returns:
+            Transcript text as string
+        """
+        txt_path = transcript_path.replace('.json', '.txt')
+        if not os.path.exists(txt_path):
+            logger.warning(f"Transcript text file not found: {txt_path}")
+            return ""
+            
+        try:
+            with open(txt_path, 'r') as f:
+                return f.read()
+        except Exception as e:
+            logger.error(f"Error loading transcript text: {e}")
+            return ""
     
     def extract_speakers_from_transcript(self, transcript_data: Dict) -> Dict[int, Dict]:
         """
@@ -96,11 +119,17 @@ class SpeakerIdentificationService:
                             "speaker_tag": f"Speaker {speaker_id}",
                             "name": None,
                             "utterance_count": 0,
+                            "word_count": 0,
                             "samples": [],
                             "confidence": 0.0
                         }
                     
                     speakers[speaker_id]["utterance_count"] += 1
+                    
+                    # Count words in this utterance
+                    if 'transcript' in utterance:
+                        word_count = len(re.findall(r'\S+', utterance['transcript']))
+                        speakers[speaker_id]["word_count"] += word_count
                     
                     # Store sample utterances for later analysis
                     if len(speakers[speaker_id]["samples"]) < 10 and 'transcript' in utterance:
@@ -126,6 +155,13 @@ class SpeakerIdentificationService:
         
         # Extract speakers
         speakers = self.extract_speakers_from_transcript(transcript_data)
+        
+        # If we couldn't extract speakers from the JSON, try to parse from the text file
+        if not speakers:
+            logger.info(f"No speakers found in JSON, trying to parse from text file")
+            transcript_text = self.load_transcript_text(transcript_path)
+            if transcript_text:
+                speakers = self.parse_speakers_from_text(transcript_text)
         
         # LLM-based identification
         if self.use_llm and self.llm_service and episode:
@@ -194,6 +230,118 @@ class SpeakerIdentificationService:
         
         return speakers
     
+    def parse_speakers_from_text(self, transcript_text: str) -> Dict[int, Dict]:
+        """
+        Parse speakers from transcript text file.
+        
+        Args:
+            transcript_text: Text content of the transcript file
+            
+        Returns:
+            Dictionary mapping speaker IDs to speaker info
+        """
+        speakers = {}
+        
+        # Use regex to extract speaker information
+        speaker_pattern = r'\[\d+\.\d+\]\s+Speaker\s+(\d+):\s+(.*?)(?=\[\d+\.\d+\]|$)'
+        matches = re.findall(speaker_pattern, transcript_text, re.DOTALL)
+        
+        for speaker_id_str, utterance in matches:
+            try:
+                speaker_id = int(speaker_id_str)
+                
+                if speaker_id not in speakers:
+                    speakers[speaker_id] = {
+                        "id": speaker_id,
+                        "speaker_tag": f"Speaker {speaker_id}",
+                        "name": None,
+                        "utterance_count": 0,
+                        "word_count": 0,
+                        "samples": [],
+                        "confidence": 0.0
+                    }
+                
+                # Increment utterance count
+                speakers[speaker_id]["utterance_count"] += 1
+                
+                # Count words
+                clean_utterance = utterance.strip()
+                word_count = len(re.findall(r'\S+', clean_utterance))
+                speakers[speaker_id]["word_count"] += word_count
+                
+                # Add sample utterances
+                if len(speakers[speaker_id]["samples"]) < 10:
+                    speakers[speaker_id]["samples"].append(clean_utterance)
+                    
+            except (ValueError, KeyError) as e:
+                logger.error(f"Error parsing speaker ID {speaker_id_str}: {e}")
+        
+        return speakers
+    
+    def _get_transcript_sample(self, transcript_data: Dict, max_length: int = 4000) -> str:
+        """
+        Extract a representative sample from the transcript for LLM analysis.
+        
+        Args:
+            transcript_data: Transcript data dictionary
+            max_length: Maximum length of the sample in characters
+            
+        Returns:
+            Transcript sample as string
+        """
+        sample = ""
+        
+        if not transcript_data or 'results' not in transcript_data:
+            return sample
+        
+        # Get a representative sample from utterances
+        if 'utterances' in transcript_data['results']:
+            # Get utterances from beginning, middle, and end
+            utterances = transcript_data['results']['utterances']
+            
+            if not utterances:
+                return sample
+                
+            # Determine sections to sample
+            total_utterances = len(utterances)
+            section_size = min(20, total_utterances // 3)
+            
+            # Get beginning, middle, and end sections
+            beginning = utterances[:section_size]
+            middle_start = (total_utterances - section_size) // 2
+            middle = utterances[middle_start:middle_start + section_size]
+            end = utterances[-section_size:]
+            
+            # Combine samples
+            samples = beginning + middle + end
+            
+            # Format into readable text for LLM
+            for utterance in samples:
+                if 'speaker' in utterance and 'transcript' in utterance:
+                    speaker_text = f"Speaker {utterance['speaker']}: {utterance['transcript']}\n"
+                    
+                    # Check if adding this would exceed max length
+                    if len(sample) + len(speaker_text) > max_length:
+                        sample += "--- MIDDLE OF TRANSCRIPT ---\n"
+                        break
+                    
+                    sample += speaker_text
+            
+            # Add end samples if there's room
+            if len(sample) < max_length * 0.7:
+                sample += "--- END OF TRANSCRIPT ---\n"
+                for utterance in end:
+                    if 'speaker' in utterance and 'transcript' in utterance:
+                        speaker_text = f"Speaker {utterance['speaker']}: {utterance['transcript']}\n"
+                        
+                        # Check if adding this would exceed max length
+                        if len(sample) + len(speaker_text) > max_length:
+                            break
+                        
+                        sample += speaker_text
+        
+        return sample
+    
     def process_episode(self, episode: PodcastEpisode, transcripts_dir: str) -> PodcastEpisode:
         """
         Process an episode to identify speakers and update metadata.
@@ -221,12 +369,17 @@ class SpeakerIdentificationService:
         if speakers:
             episode.speaker_count = len(speakers)
             
+            # Calculate total words
+            total_words = sum(info.get("word_count", 0) for info in speakers.values())
+            
             # Create speaker metadata
             speaker_metadata = {}
             for speaker_id, speaker_info in speakers.items():
                 speaker_metadata[str(speaker_id)] = {
                     "name": speaker_info["name"],
                     "utterance_count": speaker_info["utterance_count"],
+                    "word_count": speaker_info.get("word_count", 0),
+                    "word_percentage": round(speaker_info.get("word_count", 0) / max(1, total_words) * 100, 1),
                     "confidence": speaker_info.get("confidence", 0),
                     "is_guest": speaker_info.get("is_guest", False),
                     "is_unknown": speaker_info.get("is_unknown", False),
@@ -250,89 +403,18 @@ class SpeakerIdentificationService:
             transcripts_dir: Directory containing transcript files
             
         Returns:
-            List of updated PodcastEpisode instances with speaker information
+            List of updated PodcastEpisode instances
         """
         updated_episodes = []
         
         for episode in episodes:
+            # Skip episodes without transcripts
+            if not episode.transcript_filename:
+                logger.info(f"Episode {episode.title} has no transcript - skipping")
+                continue
+                
+            # Process episode
             updated_episode = self.process_episode(episode, transcripts_dir)
             updated_episodes.append(updated_episode)
-        
-        return updated_episodes
-    
-    def _get_transcript_sample(self, transcript_data: Dict, max_length: int = 4000) -> str:
-        """
-        Extract a representative sample from the transcript for LLM analysis.
-        
-        Args:
-            transcript_data: The transcript data
-            max_length: Maximum length of sample in characters
             
-        Returns:
-            A string containing a sample of utterances
-        """
-        sample_utterances = []
-        total_length = 0
-        
-        # Extract from utterances if available
-        if 'results' in transcript_data and 'utterances' in transcript_data['results']:
-            utterances = transcript_data['results']['utterances']
-            
-            # Sample from beginning, middle, and end of the transcript for better context
-            sample_points = [
-                (0, min(20, len(utterances))),                      # Beginning (first 20 utterances)
-                (len(utterances)//2, min(20, len(utterances)//2)),  # Middle (20 utterances from middle)
-                (max(0, len(utterances)-20), min(20, len(utterances)))  # End (last 20 utterances)
-            ]
-            
-            for start_idx, count in sample_points:
-                # Skip if we already have enough text
-                if total_length >= max_length:
-                    break
-                    
-                # Get a section header
-                if start_idx == 0:
-                    sample_utterances.append("--- BEGINNING OF TRANSCRIPT ---")
-                elif start_idx == len(utterances)//2:
-                    sample_utterances.append("--- MIDDLE OF TRANSCRIPT ---")
-                else:
-                    sample_utterances.append("--- END OF TRANSCRIPT ---")
-                
-                # Extract utterances from this section
-                section_length = 0
-                end_idx = min(start_idx + count, len(utterances))
-                
-                for i in range(start_idx, end_idx):
-                    if 'speaker' in utterances[i] and 'transcript' in utterances[i]:
-                        utterance_text = f"Speaker {utterances[i]['speaker']}: {utterances[i]['transcript']}"
-                        sample_utterances.append(utterance_text)
-                        section_length += len(utterance_text)
-                        total_length += len(utterance_text)
-                        
-                        # If this section is getting too long, move to next section
-                        if section_length > max_length / 3:
-                            break
-        
-        # If we have no utterances, try to extract from plain transcript
-        if not sample_utterances and 'results' in transcript_data and 'transcript' in transcript_data['results']:
-            # Split into lines and take samples from beginning, middle, and end
-            transcript_lines = transcript_data['results']['transcript'].split('\n')
-            
-            if len(transcript_lines) > 30:
-                # Beginning
-                sample_utterances.append("--- BEGINNING OF TRANSCRIPT ---")
-                sample_utterances.extend(transcript_lines[:10])
-                
-                # Middle
-                middle_start = len(transcript_lines) // 2 - 5
-                sample_utterances.append("--- MIDDLE OF TRANSCRIPT ---")
-                sample_utterances.extend(transcript_lines[middle_start:middle_start+10])
-                
-                # End
-                sample_utterances.append("--- END OF TRANSCRIPT ---")
-                sample_utterances.extend(transcript_lines[-10:])
-            else:
-                # Just take all lines if there aren't many
-                sample_utterances.extend(transcript_lines)
-        
-        return "\n".join(sample_utterances) 
+        return updated_episodes 

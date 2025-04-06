@@ -489,6 +489,7 @@ class IdentifySpeakersStage(AbstractStage):
                 use_llm: Whether to use LLM for speaker identification
                 llm_provider: LLM provider to use
                 force_reidentify: Whether to force re-identification of speakers
+                dry_run: Whether to run without making changes to episodes.json
                 
         Returns:
             StageResult containing the updated episode objects
@@ -498,6 +499,7 @@ class IdentifySpeakersStage(AbstractStage):
             use_llm = kwargs.get('use_llm', True)
             llm_provider = kwargs.get('llm_provider', 'openai')
             force_reidentify = kwargs.get('force_reidentify', False)
+            dry_run = kwargs.get('dry_run', False)
             
             # Initialize speaker service with appropriate settings
             speaker_service = SpeakerIdentificationService(
@@ -533,9 +535,13 @@ class IdentifySpeakersStage(AbstractStage):
             
             logger.info(f"Speaker identification complete for {len(updated_episodes)} episodes")
             
-            # Ensure repository is updated
-            for episode in updated_episodes:
-                self.repository.save_episode(episode)
+            # Ensure repository is updated (unless dry_run is True)
+            if not dry_run:
+                for episode in updated_episodes:
+                    self.repository.save_episode(episode)
+                logger.info(f"Updated episodes.json with speaker information")
+            else:
+                logger.info(f"DRY RUN: Skipped updating episodes.json with speaker information")
             
             return StageResult(
                 success=True, 
