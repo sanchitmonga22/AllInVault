@@ -91,10 +91,10 @@ For each episode:
    ```
    ID: 3fa85f64-5717-4562-b3fc-2c963f66afa6
    Title: Inflation is Transitory
-   Speaker: Chamath Palihapitiya
+   Speakers: Chamath Palihapitiya (support), David Sacks (oppose)
    Category: Economics
-   Content: This inflation is transitory and will resolve by end of year.
-   Evolution: This opinion was later revised in episode E45.
+   Description: Views on whether current inflation is temporary or persistent.
+   Evolution Notes: This opinion has evolved over time from strong conviction to uncertainty.
    ```
 
 ### 5. LLM Prompt Construction
@@ -116,7 +116,6 @@ Call OpenAI GPT-4o with the constructed prompt, requesting:
 - Per-speaker timestamp extraction
 - Category assignment
 - Keyword extraction
-- Sentiment analysis
 - Relationship identification to previous opinions
 - Contradiction detection
 - Cross-episode opinion tracking
@@ -124,47 +123,49 @@ Call OpenAI GPT-4o with the constructed prompt, requesting:
 ### 7. Response Processing
 Parse the LLM JSON response into structured Opinion objects:
 ```python
-# Process speakers data
-speakers_data = raw_op.get("speakers", [])
-speaker_timestamps = {}
+# Process speakers data from LLM response
+speakers_info = opinion_data.get("speakers", [])
+speakers = []
 
-for speaker_data in speakers_data:
-    speaker_id = speaker_data.get("speaker_id")
+for speaker_data in speaker_info:
+    speaker_id = str(speaker_data.get("speaker_id", "unknown"))
+    speaker_name = speaker_data.get("speaker_name", f"Speaker {speaker_id}")
     
-    # Add speaker timing and stance data
-    speaker_timestamps[speaker_id] = {
-        "start_time": speaker_data.get("start_time", 0.0),
-        "end_time": speaker_data.get("end_time", 0.0),
-        "stance": speaker_data.get("stance", "neutral"),
-        "reasoning": speaker_data.get("reasoning", ""),
-        "episode_id": episode.video_id
-    }
+    # Create SpeakerStance object
+    speaker = SpeakerStance(
+        speaker_id=speaker_id,
+        speaker_name=speaker_name,
+        stance=speaker_data.get("stance", "support"),
+        reasoning=speaker_data.get("reasoning"),
+        start_time=speaker_data.get("start_time"),
+        end_time=speaker_data.get("end_time")
+    )
+    speakers.append(speaker)
 
-# Create Opinion object
-opinion = Opinion(
-    id=str(uuid.uuid4()),
-    title=raw_op.get("title"),
-    description=raw_op.get("description"),
-    content=raw_op.get("content"),
-    speaker_id=primary_speaker_id,
-    speaker_name=speaker_name,
+# Create the episode appearance
+appearance = OpinionAppearance(
     episode_id=episode.video_id,
     episode_title=episode.title,
-    start_time=overall_start_time,
-    end_time=overall_end_time,
-    date=episode_date,
-    keywords=raw_op.get("keywords", []),
-    sentiment=raw_op.get("sentiment"),
-    confidence=raw_op.get("confidence", 0.7),
-    category_id=category_id,
-    related_opinions=valid_related_ids,
-    evolution_notes=raw_op.get("evolution_notes"),
-    is_contradiction=raw_op.get("is_contentious", False),
-    contradicts_opinion_id=contradicts_opinion_id,
-    contradiction_notes=raw_op.get("contradiction_notes"),
-    speaker_timestamps=speaker_timestamps,
-    appeared_in_episodes=[episode.video_id]
+    date=episode.published_at,
+    speakers=speakers,
+    content=content
 )
+
+# Create a new opinion or update an existing one
+if matched_opinion:
+    # Update existing opinion with this new appearance
+    matched_opinion.add_appearance(appearance)
+else:
+    # Create new opinion
+    new_opinion = Opinion(
+        id=str(uuid.uuid4()),
+        title=title,
+        description=description,
+        category_id=category.id,
+        # Other fields...
+    )
+    # Add the appearance
+    new_opinion.add_appearance(appearance)
 ```
 
 ### 8. Opinion Relationship Management
@@ -186,202 +187,245 @@ opinion = Opinion(
 - Track how opinions evolve across episodes
 - Record speaker stances across different episodes
 
-## Enhanced Opinion Model
+## Enhanced Opinion Model Structure
 
-The Opinion model has been enhanced with several new fields:
+### Core Models
 
-### Contradiction Tracking
+The opinion tracking system has been redesigned with three core models:
+
+#### 1. Opinion
 ```python
-# Contradiction and agreement tracking
-is_contradiction: bool = False  # Whether this opinion contradicts another
-contradicts_opinion_id: Optional[str] = None  # ID of the contradicted opinion
-contradiction_notes: Optional[str] = None  # Notes about the contradiction
+@dataclass
+class Opinion:
+    """Model representing a unique opinion that can appear across multiple episodes."""
+    
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    title: str = ""  # Short title/summary of the opinion
+    description: str = ""  # Longer description of the opinion
+    category_id: Optional[str] = None  # ID of the category for this opinion
+    
+    # Evolution tracking
+    related_opinions: List[str] = field(default_factory=list)  # IDs of related opinions
+    evolution_notes: Optional[str] = None  # Overall notes on how this opinion has evolved
+    evolution_chain: List[str] = field(default_factory=list)  # Chronological chain of opinion IDs
+    
+    # Contradiction tracking
+    is_contradiction: bool = False  # Whether this opinion contradicts another opinion
+    contradicts_opinion_id: Optional[str] = None  # ID of the opinion this contradicts
+    contradiction_notes: Optional[str] = None  # Notes about the contradiction
+    
+    # Episode appearances
+    appearances: List[OpinionAppearance] = field(default_factory=list)
+    
+    # Additional metadata
+    keywords: List[str] = field(default_factory=list)  # Keywords associated with this opinion
+    confidence: float = 0.0  # Confidence score for opinion detection
+    metadata: Dict[str, Any] = field(default_factory=dict)
 ```
 
-### Per-Speaker Timing and Stances
+#### 2. OpinionAppearance
 ```python
-# Per-speaker timestamps and positions
-speaker_timestamps: Dict[str, Dict[str, Any]] = field(default_factory=dict)
-# Map of speaker_id -> {start_time, end_time, stance, reasoning, episode_id}
+@dataclass
+class OpinionAppearance:
+    """Model representing an appearance of an opinion in a specific episode."""
+    
+    episode_id: str  # ID of the episode
+    episode_title: str  # Title of the episode
+    date: datetime  # Date of the episode
+    speakers: List[SpeakerStance] = field(default_factory=list)  # Speakers discussing this opinion
+    content: Optional[str] = None  # Actual content from this episode
+    context_notes: Optional[str] = None  # Context notes for this appearance
+    evolution_notes_for_episode: Optional[str] = None  # Evolution notes specific to this episode
 ```
 
-### Cross-Episode Tracking
+#### 3. SpeakerStance
 ```python
-# Cross-episode tracking
-appeared_in_episodes: List[str] = field(default_factory=list)
-# List of episode IDs where this opinion appeared
+@dataclass
+class SpeakerStance:
+    """Model representing a speaker's stance on an opinion in a specific episode."""
+    
+    speaker_id: str  # ID of the speaker
+    speaker_name: str  # Name of the speaker
+    stance: str = "support"  # support, oppose, neutral
+    reasoning: Optional[str] = None  # Why they have this stance
+    start_time: Optional[float] = None  # When they start discussing this opinion
+    end_time: Optional[float] = None  # When they finish discussing this opinion
 ```
+
+### Key Features of the New Model
+
+1. **Separation of Concerns**:
+   - `Opinion` represents the core opinion concept
+   - `OpinionAppearance` represents when/where the opinion was expressed
+   - `SpeakerStance` represents who expressed it and how
+
+2. **Cross-Episode Tracking**:
+   - Each opinion can have multiple appearances across different episodes
+   - Appearances are chronologically sorted by episode date
+   - Evolution notes track changes over time
+
+3. **Multi-Speaker Support**:
+   - Multiple speakers can comment on the same opinion
+   - Each speaker's stance (support/oppose/neutral) is tracked
+   - Contentious opinions (with disagreement) are easily identifiable
+
+4. **Stance Evolution Tracking**:
+   - Track how a speaker's stance on an opinion changes over time
+   - Record reasoning for each stance
+   - Identify when speakers change their position
 
 ## Opinion Tracking Logic
 
-### Identification Criteria
-The LLM is instructed to identify opinions based on:
-- Assertions that express subjective views
-- Predictions about future events
-- Strong judgments or assessments
-- Policy recommendations or normative statements
-- Significant analytical conclusions
+### Opinion Identification Across Episodes
 
-### Categorization System
-- Categories are not predefined but emergent
-- The LLM assigns categories based on content
-- Common categories include politics, economics, technology, science, etc.
-- Categories become more refined as more episodes are processed
-- New categories can be dynamically suggested by the LLM
+When processing a new episode, the system:
 
-### Stance and Contradiction Handling
-Opinions are analyzed for different stances:
+1. Extracts opinions from the transcript
+2. For each extracted opinion:
+   - Checks if it matches an existing opinion by comparing title, description, and category
+   - If a match is found, adds a new appearance to the existing opinion
+   - If no match is found, creates a new opinion
+
+### Speaker Stance Tracking
+
+The system tracks the stance of each speaker on each opinion:
+
 1. **Support**: Speaker agrees with the opinion
 2. **Oppose**: Speaker disagrees with the opinion
 3. **Neutral**: Speaker discusses but doesn't clearly agree or disagree
-4. **Contentious**: Multiple speakers express conflicting stances
 
-When contradictions are identified, the system:
-1. Records which opinion is being contradicted
-2. Notes the reasoning behind each speaker's stance
-3. Tracks the exact timing when each speaker discusses the opinion
-4. Provides detailed contradiction notes explaining the disagreement
+The system can identify contentious opinions by detecting when:
+- Different speakers have opposing stances on the same opinion
+- The same speaker has different stances across different episodes
 
-### Cross-Episode Opinion Tracking
-When an opinion appears across multiple episodes:
-1. The original opinion is updated with references to all episodes
-2. Evolution notes track how the opinion changes over time
-3. Speaker stances are recorded per episode
-4. Timestamps are maintained separately for each episode
+### Evolution and Contradiction Detection
 
-## LLM Prompt Design
+The system provides several methods to analyze opinion evolution:
 
-The prompt is designed with several key sections:
-1. **Task Definition**: Clear explanation of the opinion extraction task
-2. **Episode Context**: Metadata about the current episode
-3. **Speaker Information**: List of identified speakers
-4. **Previously Identified Opinions**: Formatted list of existing opinions
-5. **Transcript**: The full transcript with timestamps and speaker IDs
-6. **Output Format**: Strict JSON schema for response
-7. **Special Instructions**:
-   - Limit on number of opinions to extract
-   - Guidelines for handling contradictions
-   - Instructions for tracking per-speaker stances
-   - Cross-episode opinion identification
+```python
+# Get all episodes where this opinion appeared
+opinion.get_episode_ids()
 
-## Opinion Statistics
+# Get evolution of a speaker's stance across episodes
+opinion.get_speaker_evolution(speaker_id)
 
-The system tracks comprehensive statistics about extracted opinions:
-1. **Total Opinions**: Count of all extracted opinions
-2. **Evolution Tracking**: Opinions with evolution notes
-3. **Related Opinions**: Opinions linked to other opinions
-4. **Multi-Speaker Opinions**: Opinions discussed by multiple speakers
-5. **Contradictions**: Opinions that contradict other opinions
-6. **Contentious Opinions**: Opinions with disagreement among speakers
-7. **Cross-Episode Opinions**: Opinions that appear in multiple episodes
-8. **Stance Distribution**: Count of support/oppose/neutral stances
-9. **Category Distribution**: Opinions by category
-10. **Speaker Distribution**: Opinions by speaker
-11. **Episode Distribution**: Opinions by episode
+# Check if this opinion has disagreement among speakers
+opinion.is_contentious_overall()
 
-## Example LLM Response
+# Check if this opinion is an evolution of another
+opinion.is_evolution_of(other_opinion)
+
+# Check if this opinion contradicts another
+opinion.contradicts(other_opinion)
+```
+
+## Example Opinion Objects
+
+### Example 1: Multi-Speaker Opinion
 
 ```json
 {
-  "opinions": [
+  "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "title": "Federal Reserve Rate Cuts in 2024",
+  "description": "Views on how aggressively the Federal Reserve will cut interest rates in 2024",
+  "category_id": "economics",
+  "related_opinions": ["5db85f64-5717-4562-b3fc-2c963f66abb3"],
+  "evolution_notes": "This opinion has evolved from predictions of 6-7 cuts to expectations of 2-3 cuts",
+  "evolution_chain": [],
+  "is_contradiction": false,
+  "contradicts_opinion_id": null,
+  "contradiction_notes": null,
+  "appearances": [
     {
-      "title": "Fed Rate Cuts Will Be Limited in 2024",
-      "description": "Views on how aggressively the Federal Reserve will cut interest rates in 2024.",
-      "content": "The Federal Reserve's approach to interest rate cuts in 2024 is likely to be more conservative than market expectations.",
+      "episode_id": "abcdef123456",
+      "episode_title": "E123: Market Outlook for 2024",
+      "date": "2023-12-15T00:00:00",
       "speakers": [
         {
           "speaker_id": "0",
+          "speaker_name": "Chamath Palihapitiya",
           "stance": "support",
-          "reasoning": "Believes inflation will remain persistent, limiting the Fed's ability to cut rates aggressively",
+          "reasoning": "Believes inflation will remain persistent, limiting cuts",
           "start_time": 1423.5,
           "end_time": 1445.2
         },
         {
           "speaker_id": "1",
+          "speaker_name": "David Sacks",
           "stance": "oppose",
-          "reasoning": "Expects significant economic slowdown forcing the Fed to cut rates more rapidly",
+          "reasoning": "Expects economic slowdown forcing rapid cuts",
           "start_time": 1450.8,
           "end_time": 1472.3
         }
       ],
-      "primary_speaker_id": "0",
-      "category": "Economics",
-      "keywords": ["Federal Reserve", "interest rates", "inflation", "monetary policy"],
-      "sentiment": -0.2,
-      "confidence": 0.85,
-      "related_opinion_ids": ["5db85f64-5717-4562-b3fc-2c963f66abb3"],
-      "evolution_notes": "This represents a shift from Chamath's previous position in episode E110 where he predicted more aggressive rate cuts by mid-2024.",
-      "is_contentious": true,
-      "contradicts_opinion_id": null,
-      "contradiction_notes": "Speakers disagree on the pace of rate cuts due to different views on inflation persistence"
+      "content": "I think the Fed is going to be much more conservative with rate cuts than the market is pricing in.",
+      "context_notes": null,
+      "evolution_notes_for_episode": null
     }
   ],
-  "new_categories": [],
-  "cross_episode_opinions": [
-    {
-      "opinion_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-      "evolution_notes": "The speaker now expresses less certainty about this position",
-      "speakers": [
-        {
-          "speaker_id": "0",
-          "stance": "neutral",
-          "reasoning": "Now hedging predictions due to uncertain economic data",
-          "start_time": 1522.7,
-          "end_time": 1535.4
-        }
-      ]
-    }
-  ]
+  "keywords": ["Federal Reserve", "interest rates", "inflation", "monetary policy"],
+  "confidence": 0.85,
+  "metadata": {}
 }
 ```
 
-## Example Opinion Object
+### Example 2: Cross-Episode Opinion Evolution
 
 ```json
 {
-  "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-  "title": "Fed Rate Cuts Will Be Limited in 2024",
-  "description": "Chamath believes the Federal Reserve will make fewer interest rate cuts than the market expects in 2024 due to persistent inflation concerns.",
-  "content": "I think the Fed is going to be much more conservative with rate cuts than the market is pricing in. We're not going to see six cuts in 2024, maybe two or three at most.",
-  "speaker_id": "0",
-  "speaker_name": "Chamath Palihapitiya, David Sacks",
-  "episode_id": "abcdef123456",
-  "episode_title": "E123: Market Outlook for 2024",
-  "start_time": 1423.5,
-  "end_time": 1472.3,
-  "date": "2023-12-15T00:00:00",
-  "keywords": ["Federal Reserve", "interest rates", "inflation", "monetary policy", "rate cuts"],
-  "sentiment": -0.2,
-  "confidence": 0.85,
-  "category_id": "economics",
-  "related_opinions": ["5db85f64-5717-4562-b3fc-2c963f66abb3"],
-  "evolution_notes": "This represents a shift from Chamath's previous position in episode E110 where he predicted more aggressive rate cuts by mid-2024.",
-  "is_contradiction": false,
-  "contradicts_opinion_id": null,
-  "contradiction_notes": null,
-  "appeared_in_episodes": ["abcdef123456", "ghijkl789012"],
-  "speaker_timestamps": {
-    "0": {
-      "start_time": 1423.5,
-      "end_time": 1445.2,
-      "stance": "support",
-      "reasoning": "Believes inflation will remain persistent, limiting the Fed's ability to cut rates aggressively",
-      "episode_id": "abcdef123456"
+  "id": "7fb85f64-5717-4562-b3fc-2c963f66afa9",
+  "title": "Potential of AI to Disrupt Knowledge Work",
+  "description": "Views on how AI will impact knowledge workers and professional jobs",
+  "category_id": "technology",
+  "related_opinions": [],
+  "evolution_notes": "This opinion has evolved from skepticism to strong conviction about AI's impact on knowledge work",
+  "appearances": [
+    {
+      "episode_id": "xyzabc123456",
+      "episode_title": "E45: The Rise of AI",
+      "date": "2022-05-10T00:00:00",
+      "speakers": [
+        {
+          "speaker_id": "0",
+          "speaker_name": "Chamath Palihapitiya",
+          "stance": "neutral",
+          "reasoning": "Uncertain about timeline but acknowledges potential",
+          "start_time": 1823.5,
+          "end_time": 1845.2
+        }
+      ],
+      "content": "I'm not sure if AI will disrupt knowledge work in the near term, but it's something to watch.",
+      "evolution_notes_for_episode": "Initial cautious stance"
     },
-    "1": {
-      "start_time": 1450.8,
-      "end_time": 1472.3,
-      "stance": "oppose",
-      "reasoning": "Expects significant economic slowdown forcing the Fed to cut rates more rapidly",
-      "episode_id": "abcdef123456"
+    {
+      "episode_id": "defghi789012",
+      "episode_title": "E89: AI Revolution",
+      "date": "2023-01-20T00:00:00",
+      "speakers": [
+        {
+          "speaker_id": "0",
+          "speaker_name": "Chamath Palihapitiya",
+          "stance": "support",
+          "reasoning": "Has seen evidence of AI capabilities accelerating",
+          "start_time": 2523.5,
+          "end_time": 2545.2
+        },
+        {
+          "speaker_id": "2",
+          "speaker_name": "Jason Calacanis",
+          "stance": "support",
+          "reasoning": "Has invested in AI companies showing promising results",
+          "start_time": 2550.8,
+          "end_time": 2572.3
+        }
+      ],
+      "content": "AI is going to disrupt knowledge work much faster than people realize.",
+      "evolution_notes_for_episode": "Shifted to stronger conviction after seeing ChatGPT capabilities"
     }
-  },
-  "metadata": {
-    "episode_published_at": "2023-12-15T14:30:00Z",
-    "extraction_date": "2024-01-10T12:34:56.789Z",
-    "is_multi_speaker": true,
-    "all_speaker_ids": ["0", "1"]
-  }
+  ],
+  "keywords": ["AI", "knowledge work", "disruption", "jobs", "technology"],
+  "confidence": 0.92,
+  "metadata": {}
 }
 ```
 
@@ -403,4 +447,9 @@ The system tracks comprehensive statistics about extracted opinions:
    - The system can be extended to use different LLM providers
    - The opinion model can be enhanced with additional fields
    - New relationship types can be added to track different opinion connections
-   - The max_opinions_per_episode setting is configurable 
+   - The max_opinions_per_episode setting is configurable
+
+4. **Legacy Opinion Migration**:
+   - The system includes a migration function to convert legacy opinions to the new structure
+   - Automatically detects and migrates old format opinions during repository loading
+   - Preserves all existing data while adding the new capabilities 

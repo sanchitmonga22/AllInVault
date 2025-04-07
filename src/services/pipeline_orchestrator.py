@@ -556,32 +556,39 @@ class ExtractOpinionsStage(AbstractStage):
     def __init__(self, repository: JsonFileRepository, config: AppConfig):
         super().__init__(PipelineStage.EXTRACT_OPINIONS, repository, config)
         self.dependencies.add(PipelineStage.IDENTIFY_SPEAKERS)
-        
+    
     def execute(self, episode_ids: Optional[List[str]] = None, **kwargs) -> StageResult:
         """
-        Extract opinions from transcripts.
+        Execute the opinion extraction stage.
         
         Args:
-            episode_ids: List of video IDs to process, or None for all episodes with transcripts
-            **kwargs:
-                transcripts_dir: Directory containing transcripts
-                use_llm: Whether to use LLM for opinion extraction
-                llm_provider: LLM provider to use
-                force_reidentify: Whether to force re-identification of speakers
-                
+            episode_ids: List of episode IDs to process
+            **kwargs: Additional stage parameters
+            
         Returns:
-            StageResult containing the updated episode objects
+            StageResult with status and data
         """
+        logger.info("Executing opinion extraction stage")
+        
         try:
             transcripts_dir = kwargs.get('transcripts_dir', str(self.config.transcripts_dir))
             use_llm = kwargs.get('use_llm', True)
             llm_provider = kwargs.get('llm_provider', 'openai')
             force_reidentify = kwargs.get('force_reidentify', False)
             
+            # Additional parameters for opinion extraction
+            max_context_opinions = kwargs.get('max_context_opinions', 20)
+            max_opinions_per_episode = kwargs.get('max_opinions_per_episode', 15)
+            max_transcript_tokens = kwargs.get('max_transcript_tokens', 10000)
+            transcript_chunk_size = kwargs.get('transcript_chunk_size', 10000)
+            include_speaker_metadata = kwargs.get('include_speaker_metadata', True)
+            
             # Initialize opinion extraction service with appropriate settings
             opinion_extractor = OpinionExtractorService(
                 use_llm=use_llm,
-                llm_provider=llm_provider
+                llm_provider=llm_provider,
+                max_context_opinions=max_context_opinions,
+                max_opinions_per_episode=max_opinions_per_episode
             )
             
             # Determine episodes to process
@@ -604,27 +611,92 @@ class ExtractOpinionsStage(AbstractStage):
             
             logger.info(f"Extracting opinions for {len(episodes_to_process)} episodes")
             
-            # Extract opinions
-            updated_episodes = opinion_extractor.extract_opinions(
-                episodes_to_process,
-                transcripts_dir=transcripts_dir
-            )
+            total_opinions = 0
+            processed_episodes = []
             
-            logger.info(f"Opinion extraction complete for {len(updated_episodes)} episodes")
+            # Process each episode individually instead of using extract_opinions
+            for episode in episodes_to_process:
+                try:
+                    logger.info(f"Processing episode: {episode.title}")
+                    
+                    # Get transcript path
+                    transcript_path = os.path.join(transcripts_dir, episode.transcript_filename)
+                    if not os.path.exists(transcript_path):
+                        logger.warning(f"Transcript file not found: {transcript_path}")
+                        continue
+                        
+                    # Get existing opinions for context
+                    existing_opinions = opinion_extractor.opinion_repository.get_all_opinions()
+                    
+                    # Extract opinions for this episode
+                    opinions = opinion_extractor.extract_opinions_from_transcript(
+                        episode=episode,
+                        transcript_path=transcript_path,
+                        existing_opinions=existing_opinions
+                    )
+                    
+                    if opinions:
+                        logger.info(f"Extracted {len(opinions)} opinions from {episode.title}")
+                        total_opinions += len(opinions)
+                        
+                        # Update the episode metadata with new opinion structure
+                        if "opinions" not in episode.metadata:
+                            episode.metadata["opinions"] = {}
+                        
+                        # Add opinion IDs to episode metadata
+                        for opinion in opinions:
+                            # Use the new Opinion structure
+                            # Get the latest appearance for this episode
+                            episode_appearance = next(
+                                (app for app in opinion.appearances if app.episode_id == episode.video_id), 
+                                None
+                            )
+                            
+                            if episode_appearance:
+                                # Get speaker information
+                                speakers_info = []
+                                for speaker in episode_appearance.speakers:
+                                    speakers_info.append({
+                                        "id": speaker.speaker_id,
+                                        "name": speaker.speaker_name,
+                                        "stance": speaker.stance,
+                                        "start_time": speaker.start_time,
+                                        "end_time": speaker.end_time
+                                    })
+                                
+                                # Add to episode metadata
+                                episode.metadata["opinions"][opinion.id] = {
+                                    "title": opinion.title,
+                                    "description": opinion.description,
+                                    "category_id": opinion.category_id,
+                                    "speakers": speakers_info
+                                }
+                        
+                        # Save the updated episode
+                        self.repository.save_episode(episode)
+                    
+                    processed_episodes.append(episode)
+                    
+                except Exception as e:
+                    logger.error(f"Error processing episode {episode.title}: {e}")
+                    # Continue with the next episode
             
-            # Ensure repository is updated
-            for episode in updated_episodes:
-                self.repository.save_episode(episode)
+            logger.info(f"Opinion extraction complete for {len(processed_episodes)} episodes")
+            logger.info(f"Total opinions extracted: {total_opinions}")
             
             return StageResult(
                 success=True, 
-                data=updated_episodes, 
-                message=f"Successfully extracted opinions for {len(updated_episodes)} episodes"
+                data={"episodes": processed_episodes, "opinions_count": total_opinions},
+                message=f"Successfully extracted {total_opinions} opinions from {len(processed_episodes)} episodes"
             )
             
         except Exception as e:
-            logger.error(f"Error extracting opinions: {str(e)}")
-            return StageResult(success=False, error=e, message=f"Failed to extract opinions: {str(e)}")
+            logger.error(f"Error extracting opinions: {e}")
+            return StageResult(
+                success=False,
+                data=[],
+                message=f"Failed to extract opinions: {e}"
+            )
 
 
 class PipelineOrchestrator:

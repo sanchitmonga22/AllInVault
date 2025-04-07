@@ -325,3 +325,156 @@ Potential future improvements include:
 2. Streaming transcript processing for very large files
 3. Parallel processing of multiple episodes
 4. Advanced caching of intermediate results
+
+# Opinion Evolution Tracking Architecture
+
+## Overview
+
+This document outlines the architecture for tracking opinion evolution across podcast episodes. The system is designed to track how speakers' opinions on specific topics evolve over time, identify contradictions, and analyze relationships between opinions.
+
+## Data Models
+
+### Opinion
+
+The core model representing a unique opinion that can appear in multiple episodes:
+
+```
+Opinion
+├── id: Unique identifier
+├── title: Short summary 
+├── description: Detailed description
+├── category_id: Category classification
+├── related_opinions: List of related opinion IDs
+├── evolution_notes: Notes on how this opinion evolved
+├── evolution_chain: Chronological chain of opinion IDs
+├── is_contradiction: Flag for contradiction
+├── contradicts_opinion_id: ID of contradicted opinion
+├── contradiction_notes: Notes about the contradiction
+├── appearances: List of OpinionAppearance objects
+├── keywords: Associated keywords
+└── metadata: Additional metadata
+```
+
+### OpinionAppearance
+
+Represents a specific appearance of an opinion in an episode:
+
+```
+OpinionAppearance
+├── episode_id: Episode identifier
+├── episode_title: Episode title
+├── date: Episode date
+├── speakers: List of SpeakerStance objects
+├── content: Actual content from this episode
+├── context_notes: Context for this appearance
+└── evolution_notes_for_episode: Episode-specific evolution notes
+```
+
+### SpeakerStance
+
+Tracks a speaker's position on an opinion in a specific episode:
+
+```
+SpeakerStance
+├── speaker_id: Speaker identifier
+├── speaker_name: Speaker name
+├── stance: Position (support, oppose, neutral)
+├── reasoning: Explanation of stance
+├── start_time: Start timestamp
+└── end_time: End timestamp
+```
+
+## Workflow
+
+1. **Opinion Extraction**: Analyze transcripts to identify opinions
+2. **Category Classification**: Assign categories to opinions
+3. **Opinion Linking**: Connect related opinions across episodes
+4. **Evolution Tracking**: Track changes in speaker stances over time
+5. **Contradiction Detection**: Identify when opinions contradict each other
+
+## Opinion Evolution Process
+
+The opinion evolution tracking process works as follows:
+
+1. When processing a new episode:
+   - Extract opinions with their speakers and stances
+   - Categorize each opinion
+
+2. For each extracted opinion:
+   - Compare with existing opinions in the same category
+   - If it's related to an existing opinion, link them together
+   - Track how speaker positions on this opinion have changed
+
+3. After processing multiple episodes:
+   - Generate evolution timelines for each opinion
+   - Identify patterns of opinion changes for each speaker
+
+## Diagram
+
+```
+┌─────────────────┐     ┌────────────────┐     ┌───────────────────┐
+│  Episode 1      │     │  Episode 2     │     │  Episode 3        │
+│  Date: Jan 2023 │     │  Date: Feb 2023│     │  Date: Mar 2023   │
+└────────┬────────┘     └───────┬────────┘     └──────────┬────────┘
+         │                      │                         │
+         ▼                      ▼                         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                       Opinion Database                          │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  ┌─────────────────┐                                            │
+│  │ Opinion A       │                                            │
+│  │ Category: Tech  │◄────┐                                      │
+│  └────────┬────────┘     │                                      │
+│           │              │                                      │
+│           ▼              │                                      │
+│  ┌─────────────────┐     │ contradicts                          │
+│  │ Appearance 1    │     │                                      │
+│  │ Episode: Ep1    │     │                                      │
+│  │ ┌────────────┐  │     │                                      │
+│  │ │Speaker 1   │  │     │                                      │
+│  │ │Stance: Pro │  │     │     ┌─────────────────┐             │
+│  │ └────────────┘  │     └─────┤ Opinion B       │             │
+│  └─────────────────┘           │ Category: Tech  │             │
+│                                └────────┬────────┘             │
+│                                         │                      │
+│                             evolves into│                      │
+│                                         ▼                      │
+│  ┌─────────────────┐           ┌─────────────────┐             │
+│  │ Appearance 2    │           │ Opinion C       │             │
+│  │ Episode: Ep2    │           │ Category: Tech  │◄────┐       │
+│  │ ┌────────────┐  │           └────────┬────────┘     │       │
+│  │ │Speaker 1   │  │                    │              │       │
+│  │ │Stance: Con │  │                    ▼              │       │
+│  │ └────────────┘  │           ┌─────────────────┐     │       │
+│  │ ┌────────────┐  │           │ Appearance 3    │     │       │
+│  │ │Speaker 2   │  │           │ Episode: Ep3    │     │related│
+│  │ │Stance: Pro │  │           │ ┌────────────┐  │     │       │
+│  │ └────────────┘  │           │ │Speaker 1   │  │     │       │
+│  └─────────────────┘           │ │Stance: Pro │  │     │       │
+│                                │ └────────────┘  │     │       │
+│                                └─────────────────┘     │       │
+│                                                        │       │
+│                                ┌─────────────────┐     │       │
+│                                │ Opinion D       │◄────┘       │
+│                                │ Category: Tech  │             │
+│                                └─────────────────┘             │
+│                                                                │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## Benefits of this Architecture
+
+1. **Speaker Tracking**: Tracks individual speaker opinions over time
+2. **Contradiction Detection**: Identifies when speakers contradict themselves
+3. **Cross-Episode Analysis**: Links opinions across multiple episodes
+4. **Evolution Visualization**: Shows how opinions evolve chronologically
+5. **Multi-Speaker Support**: Handles shared opinions with different stances
+
+## Future Enhancements
+
+1. Add sentiment analysis for opinions
+2. Implement confidence scoring for opinion matches
+3. Create visualizations of opinion evolution
+4. Add support for topic clustering
+5. Develop an opinion search and filtering interface

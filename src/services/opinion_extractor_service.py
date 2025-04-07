@@ -10,12 +10,13 @@ import os
 import uuid
 import logging
 import re
-from typing import Dict, List, Optional, Any, Set
+import random
+from typing import Dict, List, Optional, Any, Set, Tuple
 from datetime import datetime
 from pathlib import Path
 
 from src.models.podcast_episode import PodcastEpisode
-from src.models.opinions.opinion import Opinion
+from src.models.opinions.opinion import Opinion, OpinionAppearance, SpeakerStance
 from src.models.opinions.category import Category
 from src.services.llm_service import LLMService
 from src.repositories.opinion_repository import OpinionRepository
@@ -341,87 +342,262 @@ class OpinionExtractorService:
         
         return speakers_info
     
+    def _get_most_recent_date(self, opinion: Opinion) -> datetime:
+        """
+        Get the most recent appearance date for an opinion.
+        
+        Args:
+            opinion: The opinion to get the date for
+            
+        Returns:
+            The most recent appearance date or datetime.min if no appearances
+        """
+        if not opinion.appearances:
+            return datetime.min
+        
+        # Ensure all dates have timezone information or all don't
+        dates = []
+        for app in opinion.appearances:
+            if app.date:
+                # Convert to naive datetime if it has timezone info
+                if hasattr(app.date, 'tzinfo') and app.date.tzinfo is not None:
+                    dates.append(app.date.replace(tzinfo=None))
+                else:
+                    dates.append(app.date)
+        
+        # Return the most recent date
+        return max(dates) if dates else datetime.min
+
     def _filter_relevant_opinions(
         self, 
         existing_opinions: List[Opinion],
         episode: PodcastEpisode
     ) -> List[Opinion]:
         """
-        Filter existing opinions to find the most relevant ones for context.
+        Filter existing opinions to only include the most relevant ones for context.
         
         Args:
             existing_opinions: All existing opinions
-            episode: The current episode
+            episode: Current episode being processed
             
         Returns:
-            Filtered list of most relevant opinions for context
+            List of the most relevant opinions for providing context
         """
         if not existing_opinions:
             return []
+        
+        # If we have a small number of opinions, use them all
+        if len(existing_opinions) <= self.max_context_opinions:
+            return existing_opinions
+        
+        # Extract metadata
+        episode_speakers = self._extract_speaker_info(episode)
+        episode_speaker_ids = list(episode_speakers.keys())
+        
+        # Calculate opinion relevance scores
+        relevance_scores = []
+        
+        for i, opinion in enumerate(existing_opinions):
+            score = 0
             
-        # Sort opinions by date (newest first)
-        sorted_opinions = sorted(
-            existing_opinions,
-            key=lambda op: op.date if op.date else datetime.min,
-            reverse=True
-        )
+            # Prioritize opinions by the same speakers
+            for speaker_id in opinion.get_all_speaker_ids():
+                if speaker_id in episode_speaker_ids:
+                    score += 10
+            
+            # Prioritize recent opinions
+            opinion_date = self._get_most_recent_date(opinion)
+            
+            # Ensure episode date is naive if opinion_date is naive
+            episode_date = episode.published_at
+            if hasattr(episode_date, 'tzinfo') and episode_date.tzinfo is not None and (opinion_date == datetime.min or opinion_date.tzinfo is None):
+                episode_date = episode_date.replace(tzinfo=None)
+            
+            # Calculate days between (handle case where opinion_date is datetime.min)
+            if opinion_date == datetime.min:
+                days_ago = 1000  # Just a large number to indicate old/no date
+            else:
+                try:
+                    days_ago = (episode_date - opinion_date).days
+                except TypeError:
+                    # If we still have timezone mismatch, convert both to naive
+                    episode_date = episode_date.replace(tzinfo=None) if hasattr(episode_date, 'tzinfo') and episode_date.tzinfo is not None else episode_date
+                    opinion_date = opinion_date.replace(tzinfo=None) if hasattr(opinion_date, 'tzinfo') and opinion_date.tzinfo is not None else opinion_date
+                    days_ago = (episode_date - opinion_date).days
+            
+            # Higher score for more recent opinions (but avoid negative days)
+            days_ago = max(0, days_ago)
+            recency_score = max(0, 100 - (days_ago / 10))
+            score += recency_score
+            
+            # Add a small random factor to break ties
+            score += random.random()
+            
+            relevance_scores.append((i, score))
         
-        # Different buckets for opinions by relevance
-        speaker_opinions = []  # Opinions by the same speakers
-        recent_opinions = []   # Recent opinions (regardless of speaker)
-        topic_opinions = {}    # Opinions by category
+        # Sort by relevance score (descending)
+        relevance_scores.sort(key=lambda x: x[1], reverse=True)
         
-        # Extract speakers from episode
-        episode_speakers = set()
-        if episode.metadata and "speakers" in episode.metadata:
-            episode_speakers = set(episode.metadata["speakers"].keys())
+        # Take the top N opinions
+        top_indices = [idx for idx, _ in relevance_scores[:self.max_context_opinions]]
         
-        # Get all categories
-        all_categories = self.category_repository.get_all_categories()
-        category_mapping = {cat.id: cat for cat in all_categories}
+        # Return the most relevant opinions
+        return [existing_opinions[i] for i in top_indices]
+    
+    def _construct_opinion_extraction_prompt(
+        self,
+        episode_metadata: Dict,
+        transcript_text: str,
+        speakers_info: Dict,
+        existing_opinions: List[Opinion] = None
+    ) -> Dict:
+        """
+        Construct prompt for opinion extraction.
         
-        # Filter and organize opinions
-        for opinion in sorted_opinions:
-            # Opinions by the same speakers
-            if opinion.speaker_id in episode_speakers:
-                speaker_opinions.append(opinion)
+        Args:
+            episode_metadata: Episode metadata
+            transcript_text: Formatted transcript text
+            speakers_info: Information about speakers
+            existing_opinions: List of existing opinions for context
+            
+        Returns:
+            Dictionary containing system_prompt and user_prompt
+        """
+        system_prompt = """
+You are an expert opinion analyzer for podcasts. Your task is to extract opinions expressed by speakers in the podcast transcript.
+
+For each opinion, provide:
+1. A concise title
+2. A detailed description
+3. The content (direct quote or paraphrase)
+4. The speaker information with timestamps and stance
+5. A category the opinion belongs to (choose the most appropriate: Politics, Economics, Technology, Society, Philosophy, Science, Business, Culture, Health, Environment, Media, Education, Finance, Sports, Entertainment, or create a new one if needed)
+6. Keywords associated with the opinion
+7. Evolution notes (if this opinion builds on or changes a previous one)
+8. Identify contradictions (if the speaker contradicts themselves or others)
+
+IMPORTANT: Focus on extracting substantive opinions, not casual remarks or observations. Pay careful attention to the speakers' stances on each opinion. Note when multiple speakers comment on the same opinion and their respective positions.
+
+Output your analysis in the following JSON format:
+{
+  "opinions": [
+    {
+      "title": "Short opinion title",
+      "description": "Detailed description of the opinion",
+      "content": "Direct quote or paraphrase of the opinion",
+      "speakers": [
+        {
+          "speaker_id": "1",
+          "speaker_name": "Speaker Name",
+          "stance": "support/oppose/neutral",
+          "reasoning": "Why they have this stance",
+          "start_time": 123.4,
+          "end_time": 145.6
+        }
+      ],
+      "category": "Category name",
+      "keywords": ["keyword1", "keyword2"],
+      "is_contradiction": false,
+      "contradicts_opinion_id": null,
+      "contradiction_notes": null,
+      "evolution_notes": null,
+      "related_opinions": []
+    }
+  ]
+}
+
+If there are connections to previous opinions, note them in the "related_opinions" field and explain the evolution in "evolution_notes". Pay special attention to conflicting opinions and mark contradictions appropriately.
+"""
+
+        # Format episode info
+        episode_info = f"""
+EPISODE INFO:
+Title: {episode_metadata.get('title', 'Unknown')}
+Date: {episode_metadata.get('date', 'Unknown')}
+"""
+
+        # Format speakers info
+        speakers_section = "SPEAKERS INFO:\n"
+        for speaker_id, info in speakers_info.items():
+            speakers_section += f"Speaker {speaker_id}: {info.get('name', 'Unknown')}\n"
+
+        # Format existing opinions for context
+        context_opinions = ""
+        if existing_opinions and len(existing_opinions) > 0:
+            context_opinions = f"""
+PREVIOUS OPINIONS CONTEXT:
+{self._format_opinions_for_context(existing_opinions)}
+"""
+
+        # Format the user input section
+        user_prompt = f"""
+Given the following podcast transcript, identify and extract the key opinions expressed by the speakers.
+
+{episode_info}
+{speakers_section}
+
+{context_opinions}
+
+TRANSCRIPT:
+{transcript_text}
+
+Extract the key opinions from this transcript using the format described earlier. 
+Focus on the most significant, substantive opinions (maximum {self.max_opinions_per_episode}).
+When a speaker refers to or builds upon an opinion from a previous episode, note this in the evolution_notes and link them in related_opinions.
+"""
+
+        return {
+            "system_prompt": system_prompt,
+            "user_prompt": user_prompt
+        }
+    
+    def _format_opinions_for_context(self, opinions: List[Opinion]) -> str:
+        """
+        Format existing opinions for inclusion in the context.
+        
+        Args:
+            opinions: List of existing opinions
+            
+        Returns:
+            Formatted opinions text
+        """
+        formatted_opinions = ""
+        
+        for i, opinion in enumerate(opinions):
+            # Get the most recent appearance
+            latest_appearance = opinion.appearances[0] if opinion.appearances else None
+            
+            speakers_info = ""
+            if latest_appearance and latest_appearance.speakers:
+                speakers = []
+                for speaker in latest_appearance.speakers:
+                    stance_text = f"({speaker.stance})" if speaker.stance != "support" else ""
+                    speakers.append(f"{speaker.speaker_name} {stance_text}")
+                speakers_info = ", ".join(speakers)
+            
+            formatted_opinions += f"""
+Opinion ID: {opinion.id}
+Title: {opinion.title}
+Category: {opinion.category_id}
+Speakers: {speakers_info}
+Description: {opinion.description}
+"""
+            
+            # Add evolution notes if present
+            if opinion.evolution_notes:
+                formatted_opinions += f"Evolution Notes: {opinion.evolution_notes}\n"
                 
-            # Organize by category
-            category_id = opinion.category_id
-            if category_id:
-                if category_id not in topic_opinions:
-                    topic_opinions[category_id] = []
-                if len(topic_opinions[category_id]) < 3:  # Limit to 3 opinions per category
-                    topic_opinions[category_id].append(opinion)
-                    
-            # Recent opinions (past 5 episodes)
-            if len(recent_opinions) < 10:
-                recent_opinions.append(opinion)
-                
-        # Combine the different opinion buckets with preference order:
-        # 1. Speaker opinions (same speakers)
-        # 2. Topic opinions (same categories)
-        # 3. Recent opinions
+            # Add contradiction information if present
+            if opinion.is_contradiction and opinion.contradicts_opinion_id:
+                formatted_opinions += f"Contradicts Opinion: {opinion.contradicts_opinion_id}\n"
+                if opinion.contradiction_notes:
+                    formatted_opinions += f"Contradiction Notes: {opinion.contradiction_notes}\n"
+            
+            # Separator between opinions
+            if i < len(opinions) - 1:
+                formatted_opinions += "----------\n"
         
-        combined_opinions = []
-        
-        # First add speaker opinions (limited)
-        combined_opinions.extend(speaker_opinions[:10])
-        
-        # Then add topic opinions
-        for category_id, opinions in topic_opinions.items():
-            # Only add opinions not already included
-            for opinion in opinions:
-                if opinion not in combined_opinions and len(combined_opinions) < self.max_context_opinions:
-                    combined_opinions.append(opinion)
-        
-        # Finally add recent opinions
-        for opinion in recent_opinions:
-            if opinion not in combined_opinions and len(combined_opinions) < self.max_context_opinions:
-                combined_opinions.append(opinion)
-        
-        # Truncate to max context limit
-        return combined_opinions[:self.max_context_opinions]
+        return formatted_opinions
     
     def _call_llm_for_opinion_extraction(
         self,
@@ -446,7 +622,7 @@ class OpinionExtractorService:
             return {}
             
         # Construct prompt for opinion extraction
-        prompt = self._construct_opinion_extraction_prompt(
+        prompts = self._construct_opinion_extraction_prompt(
             episode_metadata=episode_metadata,
             transcript_text=transcript_text,
             speakers_info=speakers_info,
@@ -456,7 +632,8 @@ class OpinionExtractorService:
         # Call LLM service
         try:
             response = self.llm_service.extract_opinions_from_transcript(
-                prompt=prompt,
+                system_prompt=prompts["system_prompt"],
+                prompt=prompts["user_prompt"],
                 episode_metadata=episode_metadata
             )
             
@@ -465,239 +642,6 @@ class OpinionExtractorService:
             logger.error(f"Error calling LLM for opinion extraction: {e}")
             return {}
     
-    def _format_opinions_for_context(self, opinions: List[Opinion]) -> str:
-        """
-        Format a list of opinions into a concise text for LLM context.
-        
-        Args:
-            opinions: List of opinions to format
-            
-        Returns:
-            Formatted opinions text
-        """
-        if not opinions:
-            return ""
-            
-        # Group opinions by category
-        categories = {}
-        uncategorized = []
-        
-        for opinion in opinions:
-            if opinion.category_id:
-                if opinion.category_id not in categories:
-                    # Get category name if available
-                    category = self.category_repository.get_category(opinion.category_id)
-                    category_name = category.name if category else opinion.category_id
-                    categories[opinion.category_id] = {
-                        "name": category_name,
-                        "opinions": []
-                    }
-                categories[opinion.category_id]["opinions"].append(opinion)
-            else:
-                uncategorized.append(opinion)
-        
-        # Format opinions by category
-        formatted_text = "PREVIOUSLY IDENTIFIED OPINIONS:\n\n"
-        
-        for category_id, category_data in categories.items():
-            category_name = category_data["name"]
-            category_opinions = category_data["opinions"]
-            
-            formatted_text += f"CATEGORY: {category_name}\n"
-            
-            for i, op in enumerate(category_opinions, 1):
-                formatted_text += f"{i}. ID: {op.id}\n"
-                formatted_text += f"   Title: {op.title}\n"
-                formatted_text += f"   Speaker: {op.speaker_name}\n"
-                formatted_text += f"   Content: {op.content}\n"
-                
-                # Add evolution information if available
-                if op.evolution_notes:
-                    formatted_text += f"   Evolution: {op.evolution_notes}\n"
-                
-                formatted_text += "\n"
-        
-        # Add uncategorized opinions
-        if uncategorized:
-            formatted_text += "UNCATEGORIZED OPINIONS:\n"
-            for i, op in enumerate(uncategorized, 1):
-                formatted_text += f"{i}. ID: {op.id}\n"
-                formatted_text += f"   Title: {op.title}\n"
-                formatted_text += f"   Speaker: {op.speaker_name}\n"
-                formatted_text += f"   Content: {op.content}\n"
-                
-                # Add evolution information if available
-                if op.evolution_notes:
-                    formatted_text += f"   Evolution: {op.evolution_notes}\n"
-                
-                formatted_text += "\n"
-        
-        return formatted_text
-    
-    def _construct_opinion_extraction_prompt(
-        self,
-        episode_metadata: Dict,
-        transcript_text: str,
-        speakers_info: Dict,
-        existing_opinions: List[Opinion] = None
-    ) -> str:
-        """
-        Construct prompt for the LLM to extract opinions.
-        
-        Args:
-            episode_metadata: Metadata about the episode
-            transcript_text: Formatted transcript text
-            speakers_info: Information about speakers in the episode
-            existing_opinions: List of existing opinions for context
-            
-        Returns:
-            Formatted prompt for the LLM
-        """
-        # Basic episode information
-        episode_id = episode_metadata.get("id", "")
-        episode_title = episode_metadata.get("title", "")
-        episode_date = episode_metadata.get("date", "")
-        
-        # Format speakers information
-        speakers_text = "SPEAKERS IN THIS EPISODE:\n"
-        for speaker_id, speaker_info in speakers_info.items():
-            name = speaker_info.get("name", f"Speaker {speaker_id}")
-            role = speaker_info.get("role", "Unknown")
-            speakers_text += f"Speaker {speaker_id}: {name} ({role})\n"
-        
-        # Format existing opinions in a more concise and structured way
-        existing_opinions_text = self._format_opinions_for_context(existing_opinions) if existing_opinions else ""
-        
-        # Get available categories for the LLM to use
-        categories = self.category_repository.get_all_categories()
-        categories_text = "AVAILABLE CATEGORIES:\n"
-        categories_text += "\n".join([f"- {category.name}: {category.description}" for category in categories])
-        categories_text += "\n\nNOTE: If you identify an opinion that doesn't fit into any of these categories, you can suggest a new category."
-        
-        # Use double curly braces to escape them in f-strings
-        json_structure = """
-        {
-          "opinions": [
-            {
-              "title": "Short descriptive title",
-              "description": "Detailed description of the opinion",
-              "content": "Direct quote or close paraphrase of the opinion",
-              "speakers": [
-                {
-                  "speaker_id": "ID of the speaker",
-                  "stance": "support" or "oppose" or "neutral",
-                  "reasoning": "Brief explanation of why the speaker holds this stance",
-                  "start_time": float value of start time when this speaker discusses the opinion,
-                  "end_time": float value of end time when this speaker finishes discussing the opinion
-                }
-              ],
-              "primary_speaker_id": "ID of the main speaker who originated this opinion",
-              "category": "Category name (use existing or suggest new if needed)",
-              "keywords": ["keyword1", "keyword2", ...],
-              "sentiment": float value between -1 (negative) and 1 (positive),
-              "confidence": float value between 0 and 1,
-              "related_opinion_ids": ["id1", "id2", ...] (IDs of related opinions from previous list),
-              "evolution_notes": "Detailed notes on how this opinion relates to or evolves from previous opinions",
-              "is_contentious": boolean indicating if there's significant disagreement about this opinion,
-              "contradicts_opinion_id": "ID of an opinion this directly contradicts (if applicable)",
-              "contradiction_notes": "Explanation of the contradiction (if applicable)"
-            }
-          ],
-          "new_categories": [
-            {
-              "name": "New Category Name",
-              "description": "Description of what this category encompasses"
-            }
-          ],
-          "cross_episode_opinions": [
-            {
-              "opinion_id": "ID of a previously identified opinion that also appears in this episode",
-              "evolution_notes": "How the opinion evolved in this episode",
-              "speakers": [
-                {
-                  "speaker_id": "ID of the speaker",
-                  "stance": "support" or "oppose" or "neutral",
-                  "reasoning": "Brief explanation of why the speaker holds this stance",
-                  "start_time": float value of start time,
-                  "end_time": float value of end time
-                }
-              ]
-            }
-          ]
-        }
-        """
-        
-        # Add instructions for multi-speaker opinions and contradictions
-        prompt = f"""
-        # OPINION EXTRACTION AND EVOLUTION TRACKING
-
-        Your task is to extract, categorize and track how opinions evolve over time by analyzing this podcast transcript.
-
-        ## EPISODE INFORMATION:
-        ID: {episode_id}
-        Title: {episode_title}
-        Date: {episode_date}
-
-        ## {speakers_text}
-
-        ## {categories_text}
-
-        {existing_opinions_text}
-
-        ## INSTRUCTIONS:
-        1. Identify strong opinions expressed by speakers in the transcript
-        2. IMPORTANT: Extract at most {self.max_opinions_per_episode} opinions from this episode
-        3. For each opinion:
-           - Create a concise title
-           - Write a detailed description
-           - Record ALL speakers who express a stance on this opinion
-           - For each speaker, note their stance (support, oppose, neutral), reasoning, and start/end timestamps
-           - Mark opinions with significant disagreement as contentious
-           - Specify a primary speaker who originated the opinion
-           - Categorize the opinion using an existing category OR suggest a new one
-           - Extract keywords related to the opinion
-           - Assess the sentiment (positive, negative, neutral)
-           - If it's related to any previous opinions, include their IDs in related_opinion_ids
-           - If it directly contradicts another opinion, note this with contradicts_opinion_id
-           - If it's an evolution of a previous opinion, provide detailed evolution_notes
-
-        ## OPINION EVOLUTION TRACKING:
-        - Pay special attention to how opinions evolve over time
-        - If a speaker changes their stance over time, capture this evolution
-        - If a speaker refines, clarifies, or expands on a previous opinion, capture this progression
-        - If speakers disagree with each other on the same topic, record their different stances
-        - The evolution_notes should clearly explain how opinions change or develop
-        - If you identify an opinion from a prior episode reappearing, include it in cross_episode_opinions
-
-        ## CONTRADICTION HANDLING:
-        - When speakers disagree on a topic, record this as a single opinion with different stances
-        - Include each speaker's reasoning for their stance
-        - Use exact quotes or close paraphrases to represent each position
-        - Mark contentious opinions where there is significant disagreement
-
-        ## IMPORTANT NOTES:
-        - Extract NO MORE THAN {self.max_opinions_per_episode} opinions from this episode
-        - Focus on substantive opinions, not casual remarks
-        - Look for areas where speakers express strong views or make predictions
-        - Capture diverse opinions across different categories
-        - For each speaker discussing an opinion, record their exact timestamps
-        - Always include the speaker's actual name in your analysis, not just their ID
-        - Prioritize quality over quantity in opinion extraction
-
-        ## TRANSCRIPT:
-        {transcript_text}
-
-        ## OUTPUT FORMAT:
-        Provide your response as a JSON object with the following structure:
-        ```json
-{json_structure}
-        ```
-        
-        Remember to be comprehensive but focused on meaningful opinions rather than trivial comments.
-        """
-        
-        return prompt
-    
     def _process_llm_results(
         self,
         extracted_opinions: Dict,
@@ -705,281 +649,263 @@ class OpinionExtractorService:
         existing_opinions: List[Opinion] = None
     ) -> List[Opinion]:
         """
-        Process raw LLM results into Opinion objects.
+        Process raw LLM extraction results and create Opinion objects.
         
         Args:
-            extracted_opinions: Raw opinion data from LLM
-            episode: The podcast episode
-            existing_opinions: List of existing opinions
+            extracted_opinions: Raw extraction results from LLM
+            episode: Podcast episode object
+            existing_opinions: List of existing opinions for context
             
         Returns:
             List of processed Opinion objects
         """
         processed_opinions = []
         
-        # Map existing opinions by ID for quick lookup
-        existing_opinion_map = {}
-        if existing_opinions:
-            for op in existing_opinions:
-                existing_opinion_map[op.id] = op
-        
-        # Process any new categories suggested by the LLM
-        new_categories = extracted_opinions.get("new_categories", [])
-        for new_cat in new_categories:
-            if "name" in new_cat and new_cat["name"]:
-                try:
-                    # Check if this category already exists
-                    existing_cat = self.category_repository.get_category_by_name(new_cat["name"])
-                    if not existing_cat:
-                        # Create the new category
-                        description = new_cat.get("description", f"Opinions related to {new_cat['name']}")
-                        self.category_repository.find_or_create_category(new_cat["name"])
-                        logger.info(f"Created new category: {new_cat['name']}")
-                except Exception as e:
-                    logger.error(f"Error creating new category: {e}")
-        
-        # First process cross-episode opinions
-        cross_episode_opinions = extracted_opinions.get("cross_episode_opinions", [])
-        for cross_ep_op in cross_episode_opinions:
-            opinion_id = cross_ep_op.get("opinion_id")
-            if not opinion_id or opinion_id not in existing_opinion_map:
-                logger.warning(f"Referenced opinion ID {opinion_id} not found in existing opinions")
-                continue
-                
-            # Get the existing opinion
-            existing_opinion = existing_opinion_map[opinion_id]
-            
-            # Add this episode to the opinion's appearance list
-            existing_opinion.add_episode_occurrence(episode.video_id, episode.title)
-            
-            # Update evolution notes if provided
-            if "evolution_notes" in cross_ep_op and cross_ep_op["evolution_notes"]:
-                if existing_opinion.evolution_notes:
-                    existing_opinion.evolution_notes += f"\n\nIn episode {episode.title}: {cross_ep_op['evolution_notes']}"
-                else:
-                    existing_opinion.evolution_notes = f"In episode {episode.title}: {cross_ep_op['evolution_notes']}"
-            
-            # Process speaker stances for this episode
-            speakers = cross_ep_op.get("speakers", [])
-            for speaker_data in speakers:
-                speaker_id = speaker_data.get("speaker_id")
-                if not speaker_id:
-                    continue
-                    
-                # Add speaker timestamp data
-                speaker_info = {
-                    "start_time": speaker_data.get("start_time", 0.0),
-                    "end_time": speaker_data.get("end_time", 0.0),
-                    "stance": speaker_data.get("stance", "neutral"),
-                    "reasoning": speaker_data.get("reasoning", ""),
-                    "episode_id": episode.video_id
-                }
-                
-                # Store in the speaker_timestamps dictionary
-                if speaker_id not in existing_opinion.speaker_timestamps:
-                    existing_opinion.speaker_timestamps[speaker_id] = {}
-                
-                # Store episode-specific data
-                episode_key = f"episode_{episode.video_id}"
-                existing_opinion.speaker_timestamps[speaker_id][episode_key] = speaker_info
-            
-            # Save the updated opinion
-            self.opinion_repository.save_opinion(existing_opinion)
-            
-            # Add to processed opinions for return
-            processed_opinions.append(existing_opinion)
-        
-        # Get the raw opinions list
-        raw_opinions = extracted_opinions.get("opinions", [])
-        
-        # Extract speaker information from episode metadata
-        speakers_by_id = {}
-        if episode.metadata and "speakers" in episode.metadata:
-            for speaker_id, speaker_data in episode.metadata["speakers"].items():
-                speakers_by_id[speaker_id] = speaker_data.get("name", f"Speaker {speaker_id}")
-                logger.debug(f"Mapped speaker ID {speaker_id} to name: {speakers_by_id[speaker_id]}")
-        else:
-            logger.warning(f"No speaker metadata found for episode {episode.title}")
-        
-        # Limit the number of opinions per episode
-        if len(raw_opinions) > self.max_opinions_per_episode:
-            logger.warning(f"LLM returned {len(raw_opinions)} opinions, limiting to {self.max_opinions_per_episode}")
-            raw_opinions = raw_opinions[:self.max_opinions_per_episode]
-        
-        for raw_op in raw_opinions:
+        # Handle the case when we get a string instead of a dict (sometimes happens with LLM responses)
+        if isinstance(extracted_opinions, str):
             try:
-                # Generate a unique ID for this opinion
-                opinion_id = str(uuid.uuid4())
+                # Try to parse it as JSON
+                import json
+                extracted_opinions = json.loads(extracted_opinions)
+            except json.JSONDecodeError:
+                logger.error(f"Could not parse LLM response as JSON: {extracted_opinions[:100]}...")
+                return []
+        
+        if not extracted_opinions or not isinstance(extracted_opinions, dict):
+            logger.error("Invalid extraction results format")
+            return []
+        
+        # Get the opinions list from the response
+        opinions_data = extracted_opinions.get("opinions", [])
+        if not opinions_data or not isinstance(opinions_data, list):
+            logger.error("No opinions found in extraction results")
+            return []
+        
+        existing_opinions = existing_opinions or []
+        existing_opinion_map = {op.id: op for op in existing_opinions}
+        
+        # Build a map of existing opinions by title/description for matching
+        title_description_map = {}
+        for op in existing_opinions:
+            key = f"{op.title.lower()}:{op.description.lower()}"
+            title_description_map[key] = op
+        
+        # Map of category names to category objects for quick lookup
+        category_map = {}
+        for category in self.category_repository.get_all_categories():
+            category_map[category.name.lower()] = category
+        
+        # Normalize episode published_at date to ensure it's a naive datetime
+        episode_date = episode.published_at
+        if episode_date and hasattr(episode_date, 'tzinfo') and episode_date.tzinfo is not None:
+            episode_date = episode_date.replace(tzinfo=None)
+        
+        # Process each opinion
+        for opinion_data in opinions_data:
+            try:
+                # Skip if not a dict
+                if not isinstance(opinion_data, dict):
+                    logger.error(f"Invalid opinion data format: {type(opinion_data)}")
+                    continue
                 
-                # Get the episode date
-                if episode.published_at:
-                    try:
-                        if isinstance(episode.published_at, datetime):
-                            episode_date = episode.published_at
-                        else:
-                            episode_date = datetime.fromisoformat(episode.published_at.replace('Z', '+00:00'))
-                    except (ValueError, TypeError):
-                        episode_date = datetime.now()
+                # Extract basic fields from opinion data
+                title = opinion_data.get("title", "").strip()
+                description = opinion_data.get("description", "").strip()
+                content = opinion_data.get("content", "").strip()
+                
+                if not title or not description:
+                    logger.warning("Skipping opinion with missing title or description")
+                    continue
+                
+                # Get or create category
+                category_name = opinion_data.get("category", "Uncategorized").strip()
+                category = None
+                
+                if category_name.lower() in category_map:
+                    category = category_map[category_name.lower()]
                 else:
-                    episode_date = datetime.now()
-                
-                # Get category ID from name
-                category_id = None
-                category_name = raw_op.get("category", "")
-                if category_name:
+                    # Create new category
                     category = self.category_repository.find_or_create_category(category_name)
-                    category_id = category.id
+                    category_map[category_name.lower()] = category
                 
-                # Prepare related opinions
-                related_opinion_ids = raw_op.get("related_opinion_ids", [])
+                # Get speaker information and stances
+                speaker_info = opinion_data.get("speakers", [])
                 
-                # Filter to only include valid existing opinion IDs
-                valid_related_ids = [op_id for op_id in related_opinion_ids if op_id in existing_opinion_map]
+                # Handle the case when speakers is a string
+                if isinstance(speaker_info, str):
+                    logger.error(f"Speaker info is a string, not a list: {speaker_info}")
+                    speaker_info = []
                 
-                # Process contradiction data
-                is_contradiction = raw_op.get("is_contentious", False)
-                contradicts_opinion_id = raw_op.get("contradicts_opinion_id")
-                if contradicts_opinion_id and contradicts_opinion_id not in existing_opinion_map:
-                    logger.warning(f"Referenced contradiction opinion ID {contradicts_opinion_id} not found")
-                    contradicts_opinion_id = None
+                if not isinstance(speaker_info, list):
+                    speaker_info = [speaker_info]
                 
-                contradiction_notes = raw_op.get("contradiction_notes", "")
+                speakers = []
                 
-                # Process speaker data
-                speakers_data = raw_op.get("speakers", [])
-                
-                # Use primary speaker as the main speaker for the opinion
-                primary_speaker_id = raw_op.get("primary_speaker_id")
-                if not primary_speaker_id and speakers_data:
-                    primary_speaker_id = speakers_data[0].get("speaker_id", "0")
-                    
-                speaker_id = primary_speaker_id or "0"
-                
-                # Determine speaker name
-                speaker_name = "Unknown Speaker"
-                if speaker_id in speakers_by_id:
-                    speaker_name = speakers_by_id[speaker_id]
-                elif episode.metadata and "speakers" in episode.metadata and speaker_id in episode.metadata["speakers"]:
-                    speaker_data = episode.metadata["speakers"][speaker_id]
-                    speaker_name = speaker_data.get("name", f"Speaker {speaker_id}")
-                
-                # If we have multiple speakers, create a combined speaker name
-                speaker_names = []
-                speaker_timestamps = {}
-                
-                for speaker_data in speakers_data:
-                    s_id = speaker_data.get("speaker_id")
-                    if not s_id:
+                for speaker_data in speaker_info:
+                    # Skip if not a dict
+                    if not isinstance(speaker_data, dict):
+                        logger.error(f"Invalid speaker data format: {type(speaker_data)}")
                         continue
-                        
-                    # Get speaker name
-                    s_name = "Unknown Speaker"
-                    if s_id in speakers_by_id:
-                        s_name = speakers_by_id[s_id]
-                    elif episode.metadata and "speakers" in episode.metadata and s_id in episode.metadata["speakers"]:
-                        s_info = episode.metadata["speakers"][s_id]
-                        s_name = s_info.get("name", f"Speaker {s_id}")
                     
-                    # Add to speaker names list if not already there
-                    if s_name not in speaker_names:
-                        speaker_names.append(s_name)
+                    speaker_id = str(speaker_data.get("speaker_id", "unknown"))
+                    speaker_name = speaker_data.get("speaker_name", f"Speaker {speaker_id}")
                     
-                    # Add speaker timing and stance data
-                    speaker_timestamps[s_id] = {
-                        "start_time": speaker_data.get("start_time", 0.0),
-                        "end_time": speaker_data.get("end_time", 0.0),
-                        "stance": speaker_data.get("stance", "neutral"),
-                        "reasoning": speaker_data.get("reasoning", ""),
-                        "episode_id": episode.video_id
-                    }
+                    # Create SpeakerStance object
+                    speaker = SpeakerStance(
+                        speaker_id=speaker_id,
+                        speaker_name=speaker_name,
+                        stance=speaker_data.get("stance", "support"),
+                        reasoning=speaker_data.get("reasoning"),
+                        start_time=speaker_data.get("start_time"),
+                        end_time=speaker_data.get("end_time")
+                    )
+                    speakers.append(speaker)
                 
-                # Create combined speaker name
-                if len(speaker_names) > 1:
-                    speaker_name = ", ".join(speaker_names)
+                # Skip if no valid speakers
+                if not speakers:
+                    logger.warning(f"Skipping opinion with no valid speakers: {title}")
+                    continue
                 
-                logger.info(f"Processing opinion by {speaker_name} in category: {category_name}")
-                
-                # Determine overall start and end time from all speakers
-                start_times = [data.get("start_time", 0.0) for data in speaker_timestamps.values()]
-                end_times = [data.get("end_time", 0.0) for data in speaker_timestamps.values()]
-                
-                overall_start_time = min(start_times) if start_times else 0.0
-                overall_end_time = max(end_times) if end_times else 0.0
-                
-                # Prepare metadata with properly formatted datetime
-                metadata = {
-                    "episode_published_at": episode.published_at.isoformat() if isinstance(episode.published_at, datetime) else episode.published_at,
-                    "extraction_date": datetime.now().isoformat()
-                }
-                
-                # Add multi-speaker flag if applicable
-                if len(speaker_timestamps) > 1:
-                    metadata["is_multi_speaker"] = True
-                    metadata["all_speaker_ids"] = list(speaker_timestamps.keys())
-                
-                # Track opinion evolution
-                evolution_notes = raw_op.get("evolution_notes", "")
-                original_opinion_id = None
-                evolution_chain = []
-                
-                # If this opinion evolves from another, set up the evolution chain
-                if valid_related_ids:
-                    # Find the oldest related opinion that this one evolves from
-                    related_opinions = [existing_opinion_map[op_id] for op_id in valid_related_ids]
-                    oldest_related = min(related_opinions, key=lambda op: op.date if op.date else datetime.max)
-                    
-                    # If the oldest related opinion has an original_opinion_id, use that
-                    if oldest_related.original_opinion_id:
-                        original_opinion_id = oldest_related.original_opinion_id
-                        # Get the evolution chain and append to it
-                        if original_opinion_id in existing_opinion_map:
-                            original_opinion = existing_opinion_map[original_opinion_id]
-                            evolution_chain = original_opinion.evolution_chain.copy()
-                    else:
-                        # Otherwise, use the oldest related opinion as the original
-                        original_opinion_id = oldest_related.id
-                        evolution_chain = oldest_related.evolution_chain.copy()
-                    
-                    # Add all related opinions to the chain if not already there
-                    for rel_id in valid_related_ids:
-                        if rel_id not in evolution_chain:
-                            evolution_chain.append(rel_id)
-                
-                # Create the opinion object
-                opinion = Opinion(
-                    id=opinion_id,
-                    title=raw_op.get("title", "Untitled Opinion"),
-                    description=raw_op.get("description", ""),
-                    content=raw_op.get("content", ""),
-                    speaker_id=speaker_id,
-                    speaker_name=speaker_name,
+                # Create the episode appearance
+                appearance = OpinionAppearance(
                     episode_id=episode.video_id,
                     episode_title=episode.title,
-                    start_time=overall_start_time,
-                    end_time=overall_end_time,
-                    date=episode_date,
-                    keywords=raw_op.get("keywords", []),
-                    sentiment=raw_op.get("sentiment"),
-                    confidence=raw_op.get("confidence", 0.7),
-                    category_id=category_id,
-                    related_opinions=valid_related_ids,
-                    evolution_notes=evolution_notes,
-                    original_opinion_id=original_opinion_id,
-                    evolution_chain=evolution_chain,
-                    is_contradiction=is_contradiction,
-                    contradicts_opinion_id=contradicts_opinion_id,
-                    contradiction_notes=contradiction_notes,
-                    appeared_in_episodes=[episode.video_id],
-                    speaker_timestamps=speaker_timestamps,
-                    metadata=metadata
+                    date=episode_date,  # Use normalized episode date
+                    speakers=speakers,
+                    content=content
                 )
                 
-                processed_opinions.append(opinion)
+                # Try to match with existing opinions
+                matched_opinion = self._find_matching_opinion(
+                    title, description, category.id, existing_opinions
+                )
                 
+                if matched_opinion:
+                    # Update the existing opinion with this new appearance
+                    matched_opinion.add_appearance(appearance)
+                    
+                    # Handle evolution notes
+                    evolution_notes = opinion_data.get("evolution_notes")
+                    if evolution_notes:
+                        if matched_opinion.evolution_notes:
+                            matched_opinion.evolution_notes += f"\n\n{evolution_notes}"
+                        else:
+                            matched_opinion.evolution_notes = evolution_notes
+                    
+                    # Handle related opinions
+                    related_opinions = opinion_data.get("related_opinions", [])
+                    if related_opinions and isinstance(related_opinions, list):
+                        for related_id in related_opinions:
+                            if related_id not in matched_opinion.related_opinions:
+                                matched_opinion.related_opinions.append(related_id)
+                    
+                    # Handle contradictions
+                    is_contradiction = opinion_data.get("is_contradiction", False)
+                    contradicts_id = opinion_data.get("contradicts_opinion_id")
+                    
+                    if is_contradiction and contradicts_id:
+                        matched_opinion.is_contradiction = True
+                        matched_opinion.contradicts_opinion_id = contradicts_id
+                        matched_opinion.contradiction_notes = opinion_data.get("contradiction_notes")
+                    
+                    processed_opinions.append(matched_opinion)
+                else:
+                    # Create a new opinion
+                    new_opinion = Opinion(
+                        id=str(uuid.uuid4()),
+                        title=title,
+                        description=description,
+                        category_id=category.id,
+                        related_opinions=opinion_data.get("related_opinions", []) if isinstance(opinion_data.get("related_opinions"), list) else [],
+                        evolution_notes=opinion_data.get("evolution_notes"),
+                        is_contradiction=opinion_data.get("is_contradiction", False),
+                        contradicts_opinion_id=opinion_data.get("contradicts_opinion_id"),
+                        contradiction_notes=opinion_data.get("contradiction_notes"),
+                        keywords=opinion_data.get("keywords", []) if isinstance(opinion_data.get("keywords"), list) else [],
+                        confidence=opinion_data.get("confidence", 0.8)
+                    )
+                    
+                    # Add the appearance
+                    new_opinion.add_appearance(appearance)
+                    
+                    processed_opinions.append(new_opinion)
+            
             except Exception as e:
-                logger.error(f"Error processing opinion: {e}")
+                logger.error(f"Error processing opinion data: {e}")
+                continue
+        
+        # Save all processed opinions
+        if processed_opinions:
+            self.opinion_repository.save_opinions(processed_opinions)
+            logger.info(f"Saved {len(processed_opinions)} opinions to repository")
         
         return processed_opinions
+    
+    def _find_matching_opinion(
+        self,
+        title: str,
+        description: str,
+        category_id: str,
+        existing_opinions: List[Opinion]
+    ) -> Optional[Opinion]:
+        """
+        Find an existing opinion that matches the provided details.
+        
+        Args:
+            title: Opinion title
+            description: Opinion description
+            category_id: Category ID
+            existing_opinions: List of existing opinions
+            
+        Returns:
+            Matched opinion or None if no match found
+        """
+        # First try exact match by title
+        title_matches = [op for op in existing_opinions if op.title.lower() == title.lower()]
+        
+        if len(title_matches) == 1:
+            return title_matches[0]
+        
+        # If multiple title matches, narrow down by description similarity
+        if len(title_matches) > 1:
+            for op in title_matches:
+                if self._is_similar_text(op.description.lower(), description.lower()):
+                    return op
+        
+        # Try by description similarity in the same category
+        category_matches = [op for op in existing_opinions if op.category_id == category_id]
+        for op in category_matches:
+            if self._is_similar_text(op.description.lower(), description.lower()):
+                return op
+        
+        # No matches found
+        return None
+    
+    def _is_similar_text(self, text1: str, text2: str, threshold: float = 0.8) -> bool:
+        """
+        Check if two text strings are similar using simple heuristics.
+        
+        Args:
+            text1: First text string
+            text2: Second text string
+            threshold: Similarity threshold
+            
+        Returns:
+            True if texts are similar, False otherwise
+        """
+        # Very simple similarity check for now
+        # Could be enhanced with more sophisticated algorithms
+        words1 = set(text1.split())
+        words2 = set(text2.split())
+        
+        if not words1 or not words2:
+            return False
+            
+        intersection = words1.intersection(words2)
+        
+        similarity = len(intersection) / max(len(words1), len(words2))
+        
+        return similarity >= threshold
     
     def extract_opinions(
         self, 

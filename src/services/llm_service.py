@@ -34,12 +34,13 @@ class LLMProvider(ABC):
         pass
 
     @abstractmethod
-    def extract_opinions_from_transcript(self, prompt: str, episode_metadata: Dict) -> Dict:
+    def extract_opinions_from_transcript(self, system_prompt: str, prompt: str, episode_metadata: Dict) -> Dict:
         """
         Extract opinions from transcript using LLM.
         
         Args:
-            prompt: The formatted prompt for opinion extraction
+            system_prompt: The system prompt providing instructions
+            prompt: The user prompt with transcript content
             episode_metadata: Dictionary with episode metadata for context
             
         Returns:
@@ -223,12 +224,13 @@ class OpenAIProvider(LLMProvider):
             logger.error(f"Error calling OpenAI API: {e}")
             return {"hosts": [], "guests": []}
     
-    def extract_opinions_from_transcript(self, prompt: str, episode_metadata: Dict) -> Dict:
+    def extract_opinions_from_transcript(self, system_prompt: str, prompt: str, episode_metadata: Dict) -> Dict:
         """
         Extract opinions from transcript using OpenAI.
         
         Args:
-            prompt: The formatted prompt for opinion extraction
+            system_prompt: The system prompt providing instructions
+            prompt: The user prompt with transcript content
             episode_metadata: Dictionary with episode metadata for context
             
         Returns:
@@ -247,7 +249,7 @@ class OpenAIProvider(LLMProvider):
                 response = client.chat.completions.create(
                     model=self.model,
                     messages=[
-                        {"role": "system", "content": "You are a helpful assistant that extracts opinions from podcast transcripts. Return structured data in JSON format."},
+                        {"role": "system", "content": system_prompt},
                         {"role": "user", "content": prompt}
                     ],
                     response_format={"type": "json_object"},
@@ -261,7 +263,7 @@ class OpenAIProvider(LLMProvider):
                 response = openai.ChatCompletion.create(
                     model=self.model,
                     messages=[
-                        {"role": "system", "content": "You are a helpful assistant that extracts opinions from podcast transcripts. Return structured data in JSON format."},
+                        {"role": "system", "content": system_prompt},
                         {"role": "user", "content": prompt + "\n\nImportant: Return your response as a valid JSON object only, with no other text."}
                     ],
                     temperature=0.3
@@ -330,12 +332,13 @@ class DeepSeekProvider(LLMProvider):
         logger.warning("DeepSeek provider is not fully implemented yet")
         return {"hosts": [], "guests": []}
 
-    def extract_opinions_from_transcript(self, prompt: str, episode_metadata: Dict) -> Dict:
+    def extract_opinions_from_transcript(self, system_prompt: str, prompt: str, episode_metadata: Dict) -> Dict:
         """
         Extract opinions from transcript using DeepSeek.
         
         Args:
-            prompt: The formatted prompt for opinion extraction
+            system_prompt: The system prompt providing instructions
+            prompt: The user prompt with transcript content
             episode_metadata: Dictionary with episode metadata for context
             
         Returns:
@@ -397,18 +400,19 @@ class LLMService:
         
         return self.provider.extract_speakers(episode_metadata, transcript_sample)
     
-    def extract_opinions_from_transcript(self, prompt: str, episode_metadata: Dict) -> Dict:
+    def extract_opinions_from_transcript(self, system_prompt: str, prompt: str, episode_metadata: Dict) -> Dict:
         """
         Extract opinions from transcript using LLM.
         
         Args:
-            prompt: The formatted prompt for opinion extraction
+            system_prompt: The system prompt providing instructions
+            prompt: The user prompt with transcript content
             episode_metadata: Dictionary with episode metadata for context
             
         Returns:
             Dictionary with extracted opinions
         """
-        return self.provider.extract_opinions_from_transcript(prompt, episode_metadata)
+        return self.provider.extract_opinions_from_transcript(system_prompt, prompt, episode_metadata)
     
     def _get_transcript_sample(self, transcript_path: str, sample_size: int = 10) -> str:
         """

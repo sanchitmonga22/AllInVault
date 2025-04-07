@@ -10,7 +10,7 @@ import logging
 from typing import Dict, List, Optional, Set, Any
 from datetime import datetime
 
-from src.models.opinions.opinion import Opinion
+from src.models.opinions.opinion import Opinion, OpinionAppearance, SpeakerStance
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -62,7 +62,14 @@ class OpinionRepository:
             
             for opinion_data in opinions_list:
                 try:
-                    opinion = Opinion.from_dict(opinion_data)
+                    # Check if this is a legacy opinion format that needs migration
+                    if "speaker_id" in opinion_data or "episode_id" in opinion_data:
+                        # This is an old format opinion, use the migration method
+                        opinion = Opinion.migrate_legacy_opinion(opinion_data)
+                    else:
+                        # This is the new format
+                        opinion = Opinion.from_dict(opinion_data)
+                    
                     self.opinions[opinion.id] = opinion
                 except Exception as e:
                     logger.error(f"Error parsing opinion data: {e}")
@@ -108,17 +115,49 @@ class OpinionRepository:
         """
         return self.opinions.get(opinion_id)
     
-    def get_opinions_by_speaker(self, speaker_name: str) -> List[Opinion]:
+    def get_opinions_by_speaker(self, speaker_id: str) -> List[Opinion]:
         """
         Get all opinions expressed by a specific speaker.
+        
+        Args:
+            speaker_id: ID of the speaker
+            
+        Returns:
+            List of opinions involving the speaker
+        """
+        results = []
+        for opinion in self.opinions.values():
+            # Check if this speaker appears in any of the opinion's appearances
+            for appearance in opinion.appearances:
+                for speaker in appearance.speakers:
+                    if speaker.speaker_id == speaker_id:
+                        results.append(opinion)
+                        break
+        
+        return results
+    
+    def get_opinions_by_speaker_name(self, speaker_name: str) -> List[Opinion]:
+        """
+        Get all opinions expressed by a speaker identified by name.
         
         Args:
             speaker_name: Name of the speaker
             
         Returns:
-            List of opinions by the speaker
+            List of opinions involving the speaker
         """
-        return [op for op in self.opinions.values() if op.speaker_name.lower() == speaker_name.lower()]
+        results = []
+        speaker_name_lower = speaker_name.lower()
+        
+        for opinion in self.opinions.values():
+            # Check if this speaker appears in any of the opinion's appearances
+            for appearance in opinion.appearances:
+                for speaker in appearance.speakers:
+                    if speaker.speaker_name.lower() == speaker_name_lower:
+                        results.append(opinion)
+                        break
+        
+        return results
     
     def get_opinions_by_episode(self, episode_id: str) -> List[Opinion]:
         """
@@ -130,7 +169,15 @@ class OpinionRepository:
         Returns:
             List of opinions from the episode
         """
-        return [op for op in self.opinions.values() if op.episode_id == episode_id]
+        results = []
+        for opinion in self.opinions.values():
+            # Check if this episode appears in any of the opinion's appearances
+            for appearance in opinion.appearances:
+                if appearance.episode_id == episode_id:
+                    results.append(opinion)
+                    break
+        
+        return results
     
     def get_opinions_by_category(self, category_id: str) -> List[Opinion]:
         """
@@ -160,6 +207,24 @@ class OpinionRepository:
             
         related_ids = set(opinion.related_opinions)
         return [op for op in self.opinions.values() if op.id in related_ids]
+    
+    def get_contradicting_opinions(self, opinion_id: str) -> List[Opinion]:
+        """
+        Get all opinions that contradict a specific opinion.
+        
+        Args:
+            opinion_id: ID of the reference opinion
+            
+        Returns:
+            List of contradicting opinions
+        """
+        result = []
+        
+        for opinion in self.opinions.values():
+            if opinion.is_contradiction and opinion.contradicts_opinion_id == opinion_id:
+                result.append(opinion)
+            
+        return result
     
     def save_opinion(self, opinion: Opinion) -> None:
         """
@@ -219,4 +284,94 @@ class OpinionRepository:
             rel_opinion = self.get_opinion(rel_id)
             if rel_opinion and opinion_id not in rel_opinion.related_opinions:
                 rel_opinion.related_opinions.append(opinion_id)
-                self.save_opinion(rel_opinion) 
+                self.save_opinion(rel_opinion)
+    
+    def add_opinion_appearance(self, opinion_id: str, appearance: OpinionAppearance) -> None:
+        """
+        Add a new episode appearance to an existing opinion.
+        
+        Args:
+            opinion_id: ID of the opinion to update
+            appearance: The appearance to add
+        """
+        opinion = self.get_opinion(opinion_id)
+        if not opinion:
+            logger.error(f"Cannot add appearance: Opinion {opinion_id} not found")
+            return
+            
+        opinion.add_appearance(appearance)
+        self.save_opinion(opinion)
+    
+    def get_speaker_evolution(self, speaker_id: str, opinion_id: str) -> List[Dict[str, Any]]:
+        """
+        Get the evolution of a speaker's stance on an opinion across episodes.
+        
+        Args:
+            speaker_id: ID of the speaker
+            opinion_id: ID of the opinion
+            
+        Returns:
+            List of stance evolution data sorted by date
+        """
+        opinion = self.get_opinion(opinion_id)
+        if not opinion:
+            return []
+            
+        return opinion.get_speaker_evolution(speaker_id)
+    
+    def get_contentious_opinions(self) -> List[Opinion]:
+        """
+        Get all opinions that have disagreement among speakers.
+        
+        Returns:
+            List of contentious opinions
+        """
+        return [op for op in self.opinions.values() if op.is_contentious_overall()]
+    
+    def get_cross_episode_opinions(self, min_episodes: int = 2) -> List[Opinion]:
+        """
+        Get all opinions that appear in multiple episodes.
+        
+        Args:
+            min_episodes: Minimum number of episodes an opinion must appear in
+            
+        Returns:
+            List of opinions appearing in multiple episodes
+        """
+        return [op for op in self.opinions.values() if len(op.appearances) >= min_episodes]
+    
+    def migrate_legacy_opinions(self) -> int:
+        """
+        Migrate all opinions from legacy format to new format.
+        
+        Returns:
+            Number of opinions migrated
+        """
+        migrated_count = 0
+        
+        # Load all opinions from the file directly to get the raw data
+        try:
+            with open(self.opinions_file_path, 'r') as f:
+                data = json.load(f)
+            
+            opinions_list = data.get("opinions", [])
+            updated_opinions = []
+            
+            for opinion_data in opinions_list:
+                # Check if this opinion needs migration
+                if "speaker_id" in opinion_data or "episode_id" in opinion_data:
+                    # Migrate the opinion
+                    migrated_opinion = Opinion.migrate_legacy_opinion(opinion_data)
+                    self.opinions[migrated_opinion.id] = migrated_opinion
+                    updated_opinions.append(migrated_opinion)
+                    migrated_count += 1
+            
+            # Save the migrated opinions
+            if migrated_count > 0:
+                self._save_opinions()
+                
+            return migrated_count
+                
+        except Exception as e:
+            logger.error(f"Failed to migrate legacy opinions: {e}")
+            return 0 

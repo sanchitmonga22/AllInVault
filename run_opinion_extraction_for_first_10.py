@@ -213,63 +213,12 @@ def migrate_opinions_to_categories(opinion_repo: OpinionRepository, category_rep
         logger = logging.getLogger("OpinionExtraction")
         
     logger.info("Migrating existing opinions to use the category system...")
-    opinions = opinion_repo.get_all_opinions()
     
-    if not opinions:
-        logger.info("No opinions found to migrate")
-        return
+    # Use the repository's new migration function
+    migrated_count = opinion_repo.migrate_legacy_opinions()
     
-    migrated_count = 0
-    for opinion in opinions:
-        needs_update = False
-        
-        # Check if the opinion already has a category_id
-        if not hasattr(opinion, 'category_id') or not opinion.category_id:
-            # Check if the opinion has the old category string field
-            if hasattr(opinion, 'category') and opinion.category:
-                # Find or create the appropriate category
-                category = category_repo.find_or_create_category(opinion.category)
-                # Set the category_id
-                opinion.category_id = category.id
-                needs_update = True
-                migrated_count += 1
-        
-        # Initialize new fields if they don't exist
-        if not hasattr(opinion, 'speaker_timestamps') or not opinion.speaker_timestamps:
-            opinion.speaker_timestamps = {}
-            # Initialize with default data from speaker_id
-            if hasattr(opinion, 'speaker_id') and opinion.speaker_id:
-                opinion.speaker_timestamps[opinion.speaker_id] = {
-                    'start_time': getattr(opinion, 'start_time', 0.0),
-                    'end_time': getattr(opinion, 'end_time', 0.0),
-                    'stance': 'support',  # Default stance for the primary speaker
-                    'episode_id': opinion.episode_id
-                }
-            needs_update = True
-        
-        if not hasattr(opinion, 'appeared_in_episodes') or not opinion.appeared_in_episodes:
-            opinion.appeared_in_episodes = [opinion.episode_id]
-            needs_update = True
-            
-        if not hasattr(opinion, 'is_contradiction'):
-            opinion.is_contradiction = False
-            needs_update = True
-            
-        if not hasattr(opinion, 'contradicts_opinion_id'):
-            opinion.contradicts_opinion_id = None
-            needs_update = True
-            
-        if not hasattr(opinion, 'contradiction_notes'):
-            opinion.contradiction_notes = None
-            needs_update = True
-        
-        if needs_update:
-            migrated_count += 1
-    
-    # Save migrated opinions
     if migrated_count > 0:
-        logger.info(f"Migrated {migrated_count} opinions to use new fields")
-        opinion_repo.save_opinions(opinions)
+        logger.info(f"Migrated {migrated_count} opinions to use new structure")
     else:
         logger.info("No opinions needed migration")
 
@@ -286,6 +235,7 @@ def show_opinion_statistics(opinion_repo: OpinionRepository, category_repo: Cate
     if logger is None:
         logger = logging.getLogger("OpinionExtraction")
         
+    # Get all opinions from data/json/opinions.json (not data/opinions/opinions.json)
     opinions = opinion_repo.get_all_opinions()
     categories = category_repo.get_all_categories()
     
@@ -307,50 +257,29 @@ def show_opinion_statistics(opinion_repo: OpinionRepository, category_repo: Cate
     shared_opinion_count = 0
     
     for opinion in opinions:
-        # Check if it's a multi-speaker opinion
-        is_multi_speaker = False
-        speaker_ids = []
+        # Check for multi-speaker opinions using the new Opinion structure
+        speakers_set = set()
         
-        # Get speaker IDs from speaker_timestamps if available
-        if hasattr(opinion, 'speaker_timestamps') and opinion.speaker_timestamps:
-            speaker_ids = list(opinion.speaker_timestamps.keys())
-            if len(speaker_ids) > 1:
-                is_multi_speaker = True
-                shared_opinion_count += 1
-        elif ',' in getattr(opinion, 'speaker_name', ''):
-            # Handle legacy multi-speaker format with comma-separated names
-            is_multi_speaker = True
+        for appearance in opinion.appearances:
+            for speaker in appearance.speakers:
+                speaker_name = speaker.speaker_name
+                speakers_set.add(speaker_name)
+                
+                # Add to speaker counts
+                if speaker_name not in speaker_counts:
+                    speaker_counts[speaker_name] = 0
+                speaker_counts[speaker_name] += 1
+        
+        # If more than one speaker, it's a shared opinion
+        if len(speakers_set) > 1:
             shared_opinion_count += 1
-            speaker_names = [name.strip() for name in opinion.speaker_name.split(',')]
-            for speaker_name in speaker_names:
-                if speaker_name not in speaker_counts:
-                    speaker_counts[speaker_name] = 0
-                speaker_counts[speaker_name] += 1
-        
-        # Count speakers from speaker_timestamps
-        if speaker_ids:
-            for speaker_id in speaker_ids:
-                # Get a speaker name from the ID or use the ID itself
-                speaker_name = f"Speaker {speaker_id}"
-                if speaker_name not in speaker_counts:
-                    speaker_counts[speaker_name] = 0
-                speaker_counts[speaker_name] += 1
-        else:
-            # Use single speaker_id and speaker_name
-            speaker_name = getattr(opinion, 'speaker_name', 'Unknown')
-            if speaker_name not in speaker_counts:
-                speaker_counts[speaker_name] = 0
-            speaker_counts[speaker_name] += 1
     
     # Count opinions by episode
     episode_counts = {}
     for opinion in opinions:
-        # Use appeared_in_episodes if available
-        episodes = getattr(opinion, 'appeared_in_episodes', [])
-        if not episodes:
-            episodes = [opinion.episode_id]
-            
-        for ep_id in episodes:
+        # Use the new Opinion structure with appearances
+        for appearance in opinion.appearances:
+            ep_id = appearance.episode_id
             if ep_id not in episode_counts:
                 episode_counts[ep_id] = 0
             episode_counts[ep_id] += 1
@@ -368,28 +297,29 @@ def show_opinion_statistics(opinion_repo: OpinionRepository, category_repo: Cate
     cross_episode_count = 0
     
     for opinion in opinions:
-        # Check for contentious opinions
-        if hasattr(opinion, 'speaker_timestamps') and opinion.speaker_timestamps:
-            has_support = False
-            has_oppose = False
+        # Check for contentious opinions using the new structure
+        has_contentious_appearance = False
+        
+        for appearance in opinion.appearances:
+            supports = any(speaker.stance == "support" for speaker in appearance.speakers)
+            opposes = any(speaker.stance == "oppose" for speaker in appearance.speakers)
             
-            for speaker_id, data in opinion.speaker_timestamps.items():
-                stance = data.get('stance', 'unknown').lower()
+            if supports and opposes:
+                has_contentious_appearance = True
+                
+            # Count stances
+            for speaker in appearance.speakers:
+                stance = speaker.stance.lower()
                 if stance in stance_counts:
                     stance_counts[stance] += 1
                 else:
                     stance_counts["unknown"] += 1
-                    
-                if stance == 'support':
-                    has_support = True
-                elif stance == 'oppose':
-                    has_oppose = True
-            
-            if has_support and has_oppose:
-                contentious_count += 1
+        
+        if has_contentious_appearance:
+            contentious_count += 1
         
         # Count cross-episode opinions
-        if hasattr(opinion, 'appeared_in_episodes') and len(getattr(opinion, 'appeared_in_episodes', [])) > 1:
+        if len(opinion.appearances) > 1:
             cross_episode_count += 1
     
     # Display statistics
@@ -411,7 +341,7 @@ def show_opinion_statistics(opinion_repo: OpinionRepository, category_repo: Cate
     logger.info("\nOpinions by Category:")
     category_dict = {cat.id: cat for cat in categories}
     for category_id, count in sorted(category_counts.items(), key=lambda x: x[1], reverse=True):
-        category_name = category_dict.get(category_id, {}).name if category_id in category_dict else f"Category {category_id}"
+        category_name = category_dict.get(category_id, Category(id=category_id, name=f"Category {category_id}")).name
         logger.info(f"  {category_name}: {count}")
     
     logger.info("\nOpinions by Speaker:")
@@ -443,8 +373,13 @@ def main():
         logger.debug("Loading configuration and initializing repositories")
         config = load_config()
         episode_repo = JsonFileRepository(str(config.episodes_db_path))
-        opinion_repo = OpinionRepository(str(OPINIONS_FILE))
-        category_repo = CategoryRepository(str(CATEGORIES_FILE))
+        
+        # Important: Use data/json/ not data/opinions/ for opinion and category files
+        opinions_json_file = "data/json/opinions.json"
+        categories_json_file = "data/json/categories.json"
+        opinion_repo = OpinionRepository(str(opinions_json_file))
+        category_repo = CategoryRepository(str(categories_json_file))
+        
         logger.debug("Repositories initialized successfully")
         
         # Add a delay at the start if requested, to reset rate limits
@@ -539,11 +474,17 @@ def main():
                     
                 # Check if opinions already exist for this episode
                 if args.skip_processed:
+                    # Use data/json/opinions.json instead of data/opinions/opinions.json
                     existing_opinions = opinion_repo.get_all_opinions()
-                    episode_opinions = [op for op in existing_opinions if op.episode_id == episode.video_id]
                     
-                    if episode_opinions:
-                        logger.info(f"Found {len(episode_opinions)} existing opinions for episode {episode.title} (ID: {episode.video_id}). Skipping.")
+                    # Use the new Opinion structure to check if opinions exist for this episode
+                    episode_opinions_count = 0
+                    for op in existing_opinions:
+                        if any(app.episode_id == episode.video_id for app in op.appearances):
+                            episode_opinions_count += 1
+                    
+                    if episode_opinions_count > 0:
+                        logger.info(f"Found {episode_opinions_count} existing opinions for episode {episode.title} (ID: {episode.video_id}). Skipping.")
                         continue
                 
                 # Add this episode to the batch
@@ -617,9 +558,15 @@ def main():
                         if hasattr(result, 'data') and result.data and 'opinions_count' in result.data:
                             batch_opinions_count = result.data['opinions_count']
                         else:
-                            # Count opinions manually if not provided in result
-                            existing_opinions = opinion_repo.get_all_opinions()
-                            batch_opinions_count = sum(1 for op in existing_opinions if op.episode_id in batch_episode_ids)
+                            # Count opinions manually from json file if not provided in result
+                            json_opinion_repo = OpinionRepository(str(opinions_json_file))
+                            existing_opinions = json_opinion_repo.get_all_opinions()
+                            
+                            # Use the new Opinion structure to count opinions for these episodes
+                            batch_opinions_count = 0
+                            for op in existing_opinions:
+                                if any(app.episode_id in batch_episode_ids for app in op.appearances):
+                                    batch_opinions_count += 1
                         
                         logger.info(f"Opinion extraction completed successfully: {result.message}")
                         logger.info(f"Extracted {batch_opinions_count} opinions from {len(batch_episode_ids)} episodes")
@@ -656,7 +603,10 @@ def main():
             # Display updated statistics after each batch
             logger.info(f"Updated opinion statistics after batch {batch_num}/{total_batches}:")
             if not args.dry_run:
-                show_opinion_statistics(opinion_repo, category_repo, logger)
+                # Use data/json repositories for statistics
+                json_opinion_repo = OpinionRepository(str(opinions_json_file))
+                json_category_repo = CategoryRepository(str(categories_json_file))
+                show_opinion_statistics(json_opinion_repo, json_category_repo, logger)
             else:
                 logger.info("[DRY RUN] Would show opinion statistics here")
             
@@ -684,7 +634,10 @@ def main():
         # Show final opinion statistics
         logger.info("Final opinion statistics:")
         if not args.dry_run:
-            show_opinion_statistics(opinion_repo, category_repo, logger)
+            # Use data/json repositories for final statistics
+            json_opinion_repo = OpinionRepository(str(opinions_json_file))
+            json_category_repo = CategoryRepository(str(categories_json_file))
+            show_opinion_statistics(json_opinion_repo, json_category_repo, logger)
         else:
             logger.info("[DRY RUN] Would show final opinion statistics here")
         
