@@ -437,4 +437,29 @@ class LLMService:
             return ""
         except Exception as e:
             logger.error(f"Error reading transcript sample: {e}")
-            return "" 
+            return ""
+    
+    def call_simple(self, system_prompt: str, prompt: str) -> Any:
+        """
+        Make a simple call to the LLM with system and user prompts.
+        
+        Args:
+            system_prompt: System prompt providing instructions
+            prompt: User prompt with content
+            
+        Returns:
+            LLM response data
+        """
+        try:
+            # For now, we'll reuse the opinion extraction method but with a simpler structure
+            # This assumes the LLM providers already have similar processing logic
+            dummy_metadata = {"title": "Simple Call", "description": "Direct LLM call"}
+            response = self.provider.extract_opinions_from_transcript(
+                system_prompt=system_prompt,
+                prompt=prompt,
+                episode_metadata=dummy_metadata
+            )
+            return response
+        except Exception as e:
+            logger.error(f"Error in simple LLM call: {e}")
+            return {} 

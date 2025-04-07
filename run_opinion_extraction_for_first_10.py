@@ -6,68 +6,91 @@ This script:
 1. Loads all episodes from the repository
 2. Sorts them by published date
 3. Selects the first 10 episodes
-4. Processes them one by one with a delay between each to avoid API rate limiting
-5. Supports opinion evolution tracking across episodes
+4. Processes them using the new multi-stage opinion extraction architecture
+5. Tracks opinion evolution across episodes
 
 Usage:
   python run_opinion_extraction_for_first_10.py [--count N] [--max-transcript-tokens N] [--delay N]
   
 Options:
   --count N                  Number of episodes to process (default: 10)
-  --max-transcript-tokens N  Maximum transcript tokens to process (default: 10000)
-  --delay N                  Delay between episodes in seconds (default: 120)
-  --max-opinions N           Maximum opinions per episode (default: 10)
-  --max-context N            Maximum context opinions (default: 10)
-  --batch-size N             Process episodes in batches of N (default: 1)
-  --transcript-format        Format of transcript files to use (json or txt) (default: json)
+  --delay N                  Delay between episodes in seconds (default: 10)
+  --max-opinions N           Maximum opinions per episode (default: 15)
+  --relation-batch-size N    Batch size for relationship analysis (default: 20)
+  --similarity-threshold N   Threshold for opinion similarity (default: 0.7)
+  --llm-model                LLM model to use (default: gpt-4o)
+  --log-level                Logging level (default: INFO)
+  --log-file                 Path to log file (optional)
+  --stage                    Specific stage to run (extraction, categorization, relationships, merging, all)
+  --skip-extraction          Skip the raw opinion extraction stage
+  --skip-categorization      Skip the opinion categorization stage
+  --skip-relationships       Skip the relationship analysis stage 
+  --skip-merging             Skip the opinion merging stage
 """
 
 import logging
 import sys
 import time
-import json
 import argparse
+import json
+import os
 from typing import List, Dict, Any
 from datetime import datetime
-import uuid
 from pathlib import Path
-from collections import defaultdict
 
-from src.services.pipeline_orchestrator import PipelineOrchestrator, PipelineStage
 from src.repositories.episode_repository import JsonFileRepository
 from src.repositories.opinion_repository import OpinionRepository
 from src.repositories.category_repository import CategoryRepository
-from src.utils.config import load_config
 from src.models.podcast_episode import PodcastEpisode
-from src.models.opinions.opinion import Opinion
-from src.models.opinions.category import Category
+from src.utils.config import load_config
+from src.services.opinion_extraction.extraction_service import OpinionExtractionService
+from src.services.opinion_extraction.raw_extraction_service import RawOpinionExtractionService
+from src.services.opinion_extraction.categorization_service import OpinionCategorizationService
+from src.services.opinion_extraction.relationship_service import OpinionRelationshipService
+from src.services.opinion_extraction.merger_service import OpinionMergerService
+from src.services.llm_service import LLMService
 
 # Parse command-line arguments
 def parse_args():
     parser = argparse.ArgumentParser(description="Run opinion extraction for podcast episodes")
     parser.add_argument("--count", type=int, default=10, help="Number of episodes to process")
-    parser.add_argument("--max-transcript-tokens", type=int, default=10000, 
-                        help="Maximum transcript tokens to process")
     parser.add_argument("--delay", type=int, default=10, 
                         help="Delay between episodes in seconds")
-    parser.add_argument("--max-opinions", type=int, default=10,
-                        help="Maximum opinions per episode")  
-    parser.add_argument("--max-context", type=int, default=10,
-                        help="Maximum context opinions")
-    parser.add_argument("--batch-size", type=int, default=1,
-                        help="Process episodes in batches of this size")
-    parser.add_argument("--restart-from", type=str, default=None,
-                        help="Episode ID to restart processing from")
+    parser.add_argument("--max-opinions", type=int, default=15,
+                        help="Maximum opinions per episode")
+    parser.add_argument("--relation-batch-size", type=int, default=20,
+                        help="Batch size for relationship analysis")  
+    parser.add_argument("--similarity-threshold", type=float, default=0.7,
+                        help="Threshold for opinion similarity")
+    parser.add_argument("--llm-model", type=str, default="gpt-4o",
+                        help="LLM model to use")
     parser.add_argument("--skip-processed", action="store_true", default=True,
                         help="Skip episodes that already have opinions")
-    parser.add_argument("--reset-rate-limit", action="store_true", default=False,
-                        help="Add an extended delay at the start to reset rate limits")
     parser.add_argument("--log-level", type=str, choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
                         default="INFO", help="Logging level")
     parser.add_argument("--log-file", type=str, default=None,
                         help="Path to log file (if not specified, logs will only go to console)")
     parser.add_argument("--dry-run", action="store_true", default=False,
                         help="Dry run - don't actually process episodes, just show what would be done")
+    
+    # Add new stage-specific arguments
+    parser.add_argument("--stage", type=str, choices=["extraction", "categorization", "relationships", "merging", "all"],
+                        default="all", help="Specific stage to run")
+    parser.add_argument("--skip-extraction", action="store_true", default=False,
+                        help="Skip the raw opinion extraction stage")
+    parser.add_argument("--skip-categorization", action="store_true", default=False,
+                        help="Skip the opinion categorization stage")
+    parser.add_argument("--skip-relationships", action="store_true", default=False,
+                        help="Skip the relationship analysis stage")
+    parser.add_argument("--skip-merging", action="store_true", default=False,
+                        help="Skip the opinion merging stage")
+    parser.add_argument("--raw-opinions-file", type=str, default="data/intermediate/raw_opinions.json",
+                        help="Path to save/load raw opinions")
+    parser.add_argument("--categorized-opinions-file", type=str, default="data/intermediate/categorized_opinions.json",
+                        help="Path to save/load categorized opinions")
+    parser.add_argument("--relationships-file", type=str, default="data/intermediate/relationships.json",
+                        help="Path to save/load relationship data")
+    
     return parser.parse_args()
 
 # Set up enhanced logging
@@ -121,23 +144,6 @@ def setup_logging(log_level=logging.INFO, log_file=None):
     
     return logger
 
-# Paths
-DATA_DIR = Path("data")
-EPISODE_DATA_DIR = DATA_DIR / "episodes"
-TRANSCRIPT_DATA_DIR = DATA_DIR / "transcripts"
-OPINION_DATA_DIR = DATA_DIR / "opinions"
-
-# Create directories if they don't exist
-OPINION_DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-OPINIONS_FILE = OPINION_DATA_DIR / "opinions.json"
-CATEGORIES_FILE = OPINION_DATA_DIR / "categories.json"
-
-# Initialize repositories
-episode_repo = JsonFileRepository(str(EPISODE_DATA_DIR))
-opinion_repo = OpinionRepository(opinions_file_path=str(OPINIONS_FILE))
-category_repo = CategoryRepository(categories_file_path=str(CATEGORIES_FILE))
-
 # Function to update episode's transcript filename based on format
 def update_transcript_filenames(episodes: List[PodcastEpisode]) -> List[PodcastEpisode]:
     """
@@ -156,7 +162,7 @@ def update_transcript_filenames(episodes: List[PodcastEpisode]) -> List[PodcastE
         video_id = episode.video_id
         
         # Check if TXT transcript file exists
-        txt_path = TRANSCRIPT_DATA_DIR / f"{video_id}.txt"
+        txt_path = Path("data/transcripts") / f"{video_id}.txt"
         
         # Update transcript filename based on availability
         if txt_path.exists():
@@ -187,7 +193,7 @@ def get_first_n_episodes_chronologically(repository: JsonFileRepository, n: int 
     all_episodes = repository.get_all_episodes()
     
     # Sort episodes by published date (oldest first)
-    sorted_episodes = sorted(all_episodes, key=lambda ep: ep.published_at)
+    sorted_episodes = sorted(all_episodes, key=lambda ep: ep.published_at if ep.published_at else datetime.min)
     
     # If start_from_id is provided, skip episodes until we find it
     if start_from_id:
@@ -199,161 +205,129 @@ def get_first_n_episodes_chronologically(repository: JsonFileRepository, n: int 
     # Return the first n episodes
     return sorted_episodes[:n]
 
-def migrate_opinions_to_categories(opinion_repo: OpinionRepository, category_repo: CategoryRepository, logger=None) -> None:
-    """
-    Migrate existing opinions to use the new category system.
-    
-    Args:
-        opinion_repo: Opinion repository
-        category_repo: Category repository
-        logger: Logger instance (optional)
-    """
-    # Use module logger if none provided
-    if logger is None:
-        logger = logging.getLogger("OpinionExtraction")
-        
-    logger.info("Migrating existing opinions to use the category system...")
-    
-    # Use the repository's new migration function
-    migrated_count = opinion_repo.migrate_legacy_opinions()
-    
-    if migrated_count > 0:
-        logger.info(f"Migrated {migrated_count} opinions to use new structure")
-    else:
-        logger.info("No opinions needed migration")
-
+# Function to display statistics about extracted opinions
 def show_opinion_statistics(opinion_repo: OpinionRepository, category_repo: CategoryRepository, logger=None) -> None:
     """
-    Display statistics about opinions and categories.
+    Display statistics about extracted opinions.
     
     Args:
         opinion_repo: Opinion repository
         category_repo: Category repository
-        logger: Logger instance (optional)
+        logger: Logger instance
     """
-    # Use module logger if none provided
     if logger is None:
         logger = logging.getLogger("OpinionExtraction")
-        
-    # Get all opinions from data/json/opinions.json (not data/opinions/opinions.json)
-    opinions = opinion_repo.get_all_opinions()
-    categories = category_repo.get_all_categories()
     
-    if not opinions:
-        logger.info("No opinions found in the repository")
-        return
+    # Get all opinions and categories
+    all_opinions = opinion_repo.get_all_opinions()
+    all_categories = category_repo.get_all_categories()
     
     # Count opinions by category
-    category_counts = {}
-    for opinion in opinions:
-        category_id = getattr(opinion, 'category_id', None)
-        if category_id:
-            if category_id not in category_counts:
-                category_counts[category_id] = 0
-            category_counts[category_id] += 1
+    opinions_by_category = {}
+    for category in all_categories:
+        opinions_by_category[category.name] = 0
     
-    # Count opinions by speaker (accounting for multi-speaker opinions)
-    speaker_counts = {}
-    shared_opinion_count = 0
-    
-    for opinion in opinions:
-        # Check for multi-speaker opinions using the new Opinion structure
-        speakers_set = set()
+    for opinion in all_opinions:
+        # Find category name
+        category_id = opinion.category_id
+        category_name = "Uncategorized"
         
-        for appearance in opinion.appearances:
-            for speaker in appearance.speakers:
-                speaker_name = speaker.speaker_name
-                speakers_set.add(speaker_name)
-                
-                # Add to speaker counts
-                if speaker_name not in speaker_counts:
-                    speaker_counts[speaker_name] = 0
-                speaker_counts[speaker_name] += 1
+        for category in all_categories:
+            if category.id == category_id:
+                category_name = category.name
+                break
         
-        # If more than one speaker, it's a shared opinion
-        if len(speakers_set) > 1:
-            shared_opinion_count += 1
+        # Increment count
+        if category_name in opinions_by_category:
+            opinions_by_category[category_name] += 1
+        else:
+            opinions_by_category[category_name] = 1
     
-    # Count opinions by episode
-    episode_counts = {}
-    for opinion in opinions:
-        # Use the new Opinion structure with appearances
-        for appearance in opinion.appearances:
-            ep_id = appearance.episode_id
-            if ep_id not in episode_counts:
-                episode_counts[ep_id] = 0
-            episode_counts[ep_id] += 1
+    # Count opinions with relationships, contradictions, etc.
+    opinions_with_related = 0
+    opinions_with_contradiction = 0
+    total_appearances = 0
+    opinions_with_multiple_appearances = 0
     
-    # Count opinions with evolution tracking and contradictions
-    evolution_count = sum(1 for op in opinions if getattr(op, 'evolution_notes', None))
-    related_count = sum(1 for op in opinions if getattr(op, 'related_opinions', []))
-    contradiction_count = sum(1 for op in opinions if getattr(op, 'is_contradiction', False))
-    
-    # Count contentious opinions (those where speakers have opposing stances)
-    contentious_count = 0
-    
-    # Count stances for multi-speaker opinions
-    stance_counts = {"support": 0, "oppose": 0, "neutral": 0, "unknown": 0}
-    cross_episode_count = 0
-    
-    for opinion in opinions:
-        # Check for contentious opinions using the new structure
-        has_contentious_appearance = False
+    for opinion in all_opinions:
+        if opinion.related_opinions:
+            opinions_with_related += 1
         
-        for appearance in opinion.appearances:
-            supports = any(speaker.stance == "support" for speaker in appearance.speakers)
-            opposes = any(speaker.stance == "oppose" for speaker in appearance.speakers)
-            
-            if supports and opposes:
-                has_contentious_appearance = True
-                
-            # Count stances
-            for speaker in appearance.speakers:
-                stance = speaker.stance.lower()
-                if stance in stance_counts:
-                    stance_counts[stance] += 1
-                else:
-                    stance_counts["unknown"] += 1
+        if opinion.is_contradiction:
+            opinions_with_contradiction += 1
         
-        if has_contentious_appearance:
-            contentious_count += 1
-        
-        # Count cross-episode opinions
         if len(opinion.appearances) > 1:
-            cross_episode_count += 1
+            opinions_with_multiple_appearances += 1
+        
+        total_appearances += len(opinion.appearances)
     
     # Display statistics
-    logger.info(f"Opinion Statistics:")
-    logger.info(f"Total Opinions: {len(opinions)}")
-    logger.info(f"Opinions with Evolution Notes: {evolution_count}")
-    logger.info(f"Opinions with Related Opinions: {related_count}")
-    logger.info(f"Multi-Speaker Opinions: {shared_opinion_count}")
-    logger.info(f"Contradicting Opinions: {contradiction_count}")
-    logger.info(f"Contentious Opinions (disagreement): {contentious_count}")
-    logger.info(f"Cross-Episode Opinions: {cross_episode_count}")
+    logger.info(f"Total opinions: {len(all_opinions)}")
+    logger.info(f"Total opinion appearances: {total_appearances}")
+    logger.info(f"Opinions with related opinions: {opinions_with_related}")
+    logger.info(f"Opinions with contradictions: {opinions_with_contradiction}")
+    logger.info(f"Opinions appearing in multiple episodes: {opinions_with_multiple_appearances}")
     
-    if sum(stance_counts.values()) > 0:
-        logger.info("\nStance Distribution:")
-        for stance, count in stance_counts.items():
-            if count > 0:
-                logger.info(f"  {stance.capitalize()}: {count}")
+    # Display opinions by category
+    logger.info("Opinions by category:")
+    for category, count in sorted(opinions_by_category.items(), key=lambda x: x[1], reverse=True):
+        if count > 0:
+            logger.info(f"  {category}: {count}")
+
+def migrate_opinions_to_categories(opinion_repo: OpinionRepository, category_repo: CategoryRepository, logger=None) -> None:
+    """
+    Ensure all opinions have valid category IDs.
     
-    logger.info("\nOpinions by Category:")
-    category_dict = {cat.id: cat for cat in categories}
-    for category_id, count in sorted(category_counts.items(), key=lambda x: x[1], reverse=True):
-        category_name = category_dict.get(category_id, Category(id=category_id, name=f"Category {category_id}")).name
-        logger.info(f"  {category_name}: {count}")
+    Args:
+        opinion_repo: Opinion repository
+        category_repo: Category repository
+        logger: Logger instance
+    """
+    if logger is None:
+        logger = logging.getLogger("OpinionExtraction")
     
-    logger.info("\nOpinions by Speaker:")
-    for speaker, count in sorted(speaker_counts.items(), key=lambda x: x[1], reverse=True):
-        logger.info(f"  {speaker}: {count}")
+    # Get all opinions and categories
+    all_opinions = opinion_repo.get_all_opinions()
     
-    logger.info("\nOpinions by Episode:")
-    for episode_id, count in sorted(episode_counts.items(), key=lambda x: x[1], reverse=True):
-        logger.info(f"  {episode_id}: {count}")
+    # Count migrations
+    migrated_count = 0
+    
+    # Check each opinion
+    for opinion in all_opinions:
+        # If category_id is a string name instead of ID, find or create the category
+        if opinion.category_id and not opinion.category_id.startswith("cat_"):
+            category_name = opinion.category_id
+            category = category_repo.find_or_create_category(category_name)
+            opinion.category_id = category.id
+            migrated_count += 1
+    
+    # Save opinions if any were migrated
+    if migrated_count > 0:
+        logger.info(f"Migrated {migrated_count} opinions to use category IDs")
+        opinion_repo.save_opinions(all_opinions)
+
+def ensure_dir_exists(file_path):
+    """Ensure the directory for a file exists."""
+    directory = os.path.dirname(file_path)
+    if directory and not os.path.exists(directory):
+        os.makedirs(directory)
+
+def save_intermediate_data(data, file_path):
+    """Save intermediate data to a JSON file."""
+    ensure_dir_exists(file_path)
+    with open(file_path, 'w') as f:
+        json.dump(data, f, indent=2)
+
+def load_intermediate_data(file_path, default=None):
+    """Load intermediate data from a JSON file."""
+    if not os.path.exists(file_path):
+        return default or {}
+    
+    with open(file_path, 'r') as f:
+        return json.load(f)
 
 def main():
-    """Run opinion extraction for episodes chronologically, one at a time."""
+    """Run opinion extraction for the first 10 episodes chronologically."""
     start_time = time.time()
     try:
         # Parse command-line arguments
@@ -372,253 +346,186 @@ def main():
         # Load config and initialize repositories
         logger.debug("Loading configuration and initializing repositories")
         config = load_config()
+        
+        # Initialize repositories
         episode_repo = JsonFileRepository(str(config.episodes_db_path))
+        opinions_file_path = "data/json/opinions.json"
+        categories_file_path = "data/json/categories.json"
+        opinion_repo = OpinionRepository(opinions_file_path)
+        category_repo = CategoryRepository(categories_file_path)
         
-        # Important: Use data/json/ not data/opinions/ for opinion and category files
-        opinions_json_file = "data/json/opinions.json"
-        categories_json_file = "data/json/categories.json"
-        opinion_repo = OpinionRepository(str(opinions_json_file))
-        category_repo = CategoryRepository(str(categories_json_file))
+        # Initialize LLM service
+        llm_service = LLMService(model=args.llm_model) if not args.dry_run else None
         
-        logger.debug("Repositories initialized successfully")
+        # Determine which stages to run
+        run_extraction = args.stage in ["extraction", "all"] and not args.skip_extraction
+        run_categorization = args.stage in ["categorization", "all"] and not args.skip_categorization
+        run_relationships = args.stage in ["relationships", "all"] and not args.skip_relationships
+        run_merging = args.stage in ["merging", "all"] and not args.skip_merging
         
-        # Add a delay at the start if requested, to reset rate limits
-        if args.reset_rate_limit:
-            delay_seconds = 300
-            logger.info(f"Adding an extended delay to reset rate limits ({delay_seconds//60} minutes)...")
-            if not args.dry_run:
-                for remaining in range(delay_seconds, 0, -30):
-                    logger.debug(f"Rate limit reset: {remaining} seconds remaining")
-                    time.sleep(min(30, remaining))
-                logger.info("Rate limit reset delay completed")
+        # Create the necessary service instances based on stages
+        raw_extraction_service = None
+        categorization_service = None
+        relationship_service = None
+        merger_service = None
+        
+        if run_extraction:
+            raw_extraction_service = RawOpinionExtractionService(
+                llm_service=llm_service,
+                max_opinions_per_episode=args.max_opinions
+            )
+        
+        if run_categorization:
+            categorization_service = OpinionCategorizationService(
+                llm_service=llm_service,
+                category_repository=category_repo
+            )
+        
+        if run_relationships:
+            relationship_service = OpinionRelationshipService(
+                llm_service=llm_service,
+                relation_batch_size=args.relation_batch_size,
+                similarity_threshold=args.similarity_threshold
+            )
+        
+        if run_merging:
+            merger_service = OpinionMergerService(
+                opinion_repository=opinion_repo,
+                category_repository=category_repo
+            )
+        
+        # Stage 1: Raw Opinion Extraction
+        all_raw_opinions = []
+        if run_extraction:
+            # Get the first N episodes chronologically
+            logger.info(f"Getting the first {args.count} episodes chronologically")
+            episodes = get_first_n_episodes_chronologically(episode_repo, args.count)
+            logger.info(f"Found {len(episodes)} episodes")
+            
+            # Update transcript filenames to use TXT format
+            logger.info("Updating transcript filenames to use TXT format")
+            episodes = update_transcript_filenames(episodes)
+            
+            # Count episodes with valid transcripts
+            episodes_with_transcripts = [ep for ep in episodes if ep.transcript_filename]
+            logger.info(f"Episodes with transcripts: {len(episodes_with_transcripts)}/{len(episodes)}")
+            
+            if args.dry_run:
+                logger.info("[DRY RUN] Would extract raw opinions from episodes")
+                for episode in episodes_with_transcripts:
+                    logger.info(f"[DRY RUN] Would process episode: {episode.title}")
             else:
-                logger.info(f"[DRY RUN] Would wait {delay_seconds} seconds for rate limit reset")
-        
-        # Migrate existing opinions to use the category system
-        logger.info("Starting opinion migration to category system")
-        if not args.dry_run:
-            migrate_start = time.time()
-            migrate_opinions_to_categories(opinion_repo, category_repo, logger)
-            migrate_duration = time.time() - migrate_start
-            logger.info(f"Opinion migration completed in {migrate_duration:.2f} seconds")
+                # Process each episode to extract raw opinions
+                for episode in episodes_with_transcripts:
+                    # Skip episodes without transcripts
+                    if not episode.transcript_filename:
+                        logger.warning(f"Episode {episode.title} has no transcript")
+                        continue
+                    
+                    # Ensure we're using a TXT transcript
+                    if not episode.transcript_filename.lower().endswith('.txt'):
+                        logger.warning(f"Episode {episode.title} has non-TXT transcript: {episode.transcript_filename}")
+                        continue
+                        
+                    transcript_path = os.path.join(str(config.transcripts_dir), episode.transcript_filename)
+                    if not os.path.exists(transcript_path):
+                        logger.warning(f"Transcript file {transcript_path} not found")
+                        continue
+                    
+                    logger.info(f"Extracting raw opinions from episode: {episode.title}")
+                    
+                    # Extract raw opinions from this episode
+                    raw_opinions = raw_extraction_service.extract_raw_opinions(
+                        episode=episode,
+                        transcript_path=transcript_path
+                    )
+                    
+                    if raw_opinions:
+                        logger.info(f"Extracted {len(raw_opinions)} raw opinions from {episode.title}")
+                        all_raw_opinions.extend(raw_opinions)
+                        
+                        # Update the episode metadata
+                        if "opinions" not in episode.metadata:
+                            episode.metadata["opinions"] = {}
+                        
+                        # Add opinion IDs to episode metadata
+                        for opinion in raw_opinions:
+                            episode.metadata["opinions"][opinion["id"]] = {
+                                "title": opinion["title"],
+                                "category": opinion["category"]
+                            }
+                
+                # Save the raw opinions to a file for future use
+                save_intermediate_data(all_raw_opinions, args.raw_opinions_file)
+                logger.info(f"Saved {len(all_raw_opinions)} raw opinions to {args.raw_opinions_file}")
         else:
-            logger.info("[DRY RUN] Would migrate opinions to category system")
+            # Load previously extracted raw opinions
+            logger.info(f"Loading raw opinions from {args.raw_opinions_file}")
+            all_raw_opinions = load_intermediate_data(args.raw_opinions_file, [])
+            logger.info(f"Loaded {len(all_raw_opinions)} raw opinions")
         
-        # Display initial statistics
-        logger.info("Initial opinion statistics:")
-        show_opinion_statistics(opinion_repo, category_repo, logger)
-        
-        # Get episodes chronologically, optionally starting from a specific episode
-        logger.info(f"Retrieving first {args.count} episodes chronologically" + 
-                   (f" starting from ID {args.restart_from}" if args.restart_from else ""))
-        episodes_start = time.time()
-        episodes = get_first_n_episodes_chronologically(
-            episode_repo, 
-            args.count, 
-            start_from_id=args.restart_from
-        )
-        episodes_duration = time.time() - episodes_start
-        logger.debug(f"Retrieved episodes in {episodes_duration:.2f} seconds")
-        
-        if not episodes:
-            logger.error("No episodes found in the repository")
-            return 1
-        
-        logger.info(f"Found {len(episodes)} episodes to process")
-        
-        # Update transcript filenames to use TXT format
-        logger.info("Updating transcript filenames to use TXT format")
-        transcript_start = time.time()
-        episodes = update_transcript_filenames(episodes)
-        
-        # Save the updated transcript filenames to the repository
-        logger.info("Saving updated transcript filenames to the repository")
-        for episode in episodes:
-            if episode.transcript_filename:
-                episode_repo.save_episode(episode)
-                
-        transcript_duration = time.time() - transcript_start
-        logger.debug(f"Updated transcript filenames in {transcript_duration:.2f} seconds")
-        
-        # Log the episodes we're processing
-        logger.info(f"Processing opinion extraction for the following {len(episodes)} episodes:")
-        for i, episode in enumerate(episodes):
-            published_date = episode.published_at.strftime('%Y-%m-%d')
-            transcript_status = "Available" if episode.transcript_filename else "Not Found"
-            logger.info(f"{i+1}. [{published_date}] {episode.title} (ID: {episode.video_id}, Transcript: {transcript_status})")
-        
-        # Initialize the pipeline orchestrator
-        orchestrator = PipelineOrchestrator()
-        
-        # Process episodes in batches if requested
-        total_batches = (len(episodes) + args.batch_size - 1) // args.batch_size
-        successful_batches = 0
-        failed_batches = 0
-        skipped_batches = 0
-        total_opinions_extracted = 0
-        
-        logger.info(f"Processing {len(episodes)} episodes in {total_batches} batch(es) of size {args.batch_size}")
-        
-        for i in range(0, len(episodes), args.batch_size):
-            batch_num = i//args.batch_size + 1
-            batch = episodes[i:i+args.batch_size]
-            batch_start_time = time.time()
-            logger.info(f"Processing batch {batch_num}/{total_batches} with {len(batch)} episodes")
-            
-            batch_episode_ids = []
-            for episode in batch:
-                # Skip episodes without transcripts
-                if not episode.transcript_filename:
-                    logger.warning(f"No transcript found for episode {episode.title} (ID: {episode.video_id}). Skipping.")
-                    continue
-                    
-                # Check if opinions already exist for this episode
-                if args.skip_processed:
-                    # Use data/json/opinions.json instead of data/opinions/opinions.json
-                    existing_opinions = opinion_repo.get_all_opinions()
-                    
-                    # Use the new Opinion structure to check if opinions exist for this episode
-                    episode_opinions_count = 0
-                    for op in existing_opinions:
-                        if any(app.episode_id == episode.video_id for app in op.appearances):
-                            episode_opinions_count += 1
-                    
-                    if episode_opinions_count > 0:
-                        logger.info(f"Found {episode_opinions_count} existing opinions for episode {episode.title} (ID: {episode.video_id}). Skipping.")
-                        continue
-                
-                # Add this episode to the batch
-                batch_episode_ids.append(episode.video_id)
-            
-            if not batch_episode_ids:
-                logger.info("No episodes to process in this batch. Continuing.")
-                skipped_batches += 1
-                continue
-                
-            logger.info(f"Processing {len(batch_episode_ids)} episodes in this batch")
-            
-            # Implement retry logic with exponential backoff
-            max_retries = 3
-            retry_delay = 60  # Initial delay in seconds
-            attempt = 0
-            success = False
-            batch_opinions_count = 0
-            
-            while attempt < max_retries and not success:
-                try:
-                    attempt += 1
-                    if attempt > 1:
-                        logger.info(f"Attempt {attempt}/{max_retries} after waiting {retry_delay}s")
-                    
-                    # Execute the opinion extraction stage for this batch
-                    logger.debug(f"Executing opinion extraction for episode IDs: {batch_episode_ids}")
-                    
-                    if args.dry_run:
-                        logger.info(f"[DRY RUN] Would extract opinions for {len(batch_episode_ids)} episodes")
-                        # Simulate success in dry run mode
-                        result = type('obj', (object,), {
-                            'success': True,
-                            'message': "Dry run simulation",
-                            'data': {'opinions_count': 0}
-                        })
-                    else:
-                        extraction_start = time.time()
-                        result = orchestrator.execute_stage(
-                            PipelineStage.EXTRACT_OPINIONS,
-                            episode_ids=batch_episode_ids,
-                            # Skip dependencies check to only run this stage
-                            check_dependencies=False,
-                            # Additional parameters for the opinion extraction stage
-                            use_llm=True,
-                            llm_provider="openai",
-                            transcripts_dir=str(config.transcripts_dir),
-                            max_context_opinions=args.max_context,     
-                            max_opinions_per_episode=args.max_opinions,
-                            # Add parameters to reduce transcript length
-                            max_transcript_tokens=args.max_transcript_tokens,
-                            transcript_chunk_size=args.max_transcript_tokens,
-                            include_speaker_metadata=True
-                        )
-                        extraction_duration = time.time() - extraction_start
-                        logger.debug(f"Opinion extraction completed in {extraction_duration:.2f} seconds")
-                    
-                    # Check for API rate limit errors in the result
-                    if not result.success and "rate_limit_exceeded" in str(result.message).lower():
-                        logger.warning(f"API rate limit exceeded. Retrying after backoff.")
-                        retry_delay *= 2  # Exponential backoff
-                        time.sleep(retry_delay)
-                        continue
-                        
-                    # If we get here, either success or non-rate-limit error
-                    success = result.success
-                    
-                    # Print result
-                    if result.success:
-                        # Get the number of opinions extracted in this batch
-                        if hasattr(result, 'data') and result.data and 'opinions_count' in result.data:
-                            batch_opinions_count = result.data['opinions_count']
-                        else:
-                            # Count opinions manually from json file if not provided in result
-                            json_opinion_repo = OpinionRepository(str(opinions_json_file))
-                            existing_opinions = json_opinion_repo.get_all_opinions()
-                            
-                            # Use the new Opinion structure to count opinions for these episodes
-                            batch_opinions_count = 0
-                            for op in existing_opinions:
-                                if any(app.episode_id in batch_episode_ids for app in op.appearances):
-                                    batch_opinions_count += 1
-                        
-                        logger.info(f"Opinion extraction completed successfully: {result.message}")
-                        logger.info(f"Extracted {batch_opinions_count} opinions from {len(batch_episode_ids)} episodes")
-                        total_opinions_extracted += batch_opinions_count
-                    else:
-                        logger.error(f"Opinion extraction failed: {result.message}")
-                        
-                    break  # Exit retry loop
-                    
-                except Exception as e:
-                    if "rate_limit" in str(e).lower() or "429" in str(e):
-                        logger.warning(f"API rate limit error: {e}")
-                        if attempt < max_retries:
-                            logger.info(f"Retrying after {retry_delay} seconds (attempt {attempt}/{max_retries})...")
-                            time.sleep(retry_delay)
-                            retry_delay *= 2  # Exponential backoff
-                        else:
-                            logger.error(f"Max retries reached. Moving to next batch.")
-                    else:
-                        logger.error(f"Error processing batch: {e}")
-                        break  # Non-rate-limit error, exit retry loop
-            
-            # Track batch success/failure
-            batch_end_time = time.time()
-            batch_duration = batch_end_time - batch_start_time
-            
-            if success:
-                successful_batches += 1
-                logger.info(f"Batch {batch_num}/{total_batches} completed successfully in {batch_duration:.2f} seconds")
+        # Stage 2: Opinion Categorization
+        categorized_opinions = {}
+        if run_categorization:
+            if not all_raw_opinions:
+                logger.warning("No raw opinions to categorize")
             else:
-                failed_batches += 1
-                logger.warning(f"Batch {batch_num}/{total_batches} failed after {batch_duration:.2f} seconds")
-            
-            # Display updated statistics after each batch
-            logger.info(f"Updated opinion statistics after batch {batch_num}/{total_batches}:")
-            if not args.dry_run:
-                # Use data/json repositories for statistics
-                json_opinion_repo = OpinionRepository(str(opinions_json_file))
-                json_category_repo = CategoryRepository(str(categories_json_file))
-                show_opinion_statistics(json_opinion_repo, json_category_repo, logger)
+                logger.info(f"Categorizing {len(all_raw_opinions)} raw opinions")
+                categorized_opinions = categorization_service.categorize_opinions(all_raw_opinions)
+                
+                # Ensure all categories exist in the repository
+                categorization_service.ensure_categories_exist(list(categorized_opinions.keys()))
+                
+                # Save the categorized opinions to a file for future use
+                save_intermediate_data(categorized_opinions, args.categorized_opinions_file)
+                logger.info(f"Saved categorized opinions to {args.categorized_opinions_file}")
+        else:
+            # Load previously categorized opinions
+            logger.info(f"Loading categorized opinions from {args.categorized_opinions_file}")
+            categorized_opinions = load_intermediate_data(args.categorized_opinions_file, {})
+            logger.info(f"Loaded categorized opinions for {len(categorized_opinions)} categories")
+        
+        # Stage 3: Relationship Analysis
+        relationship_data = []
+        if run_relationships:
+            if not categorized_opinions:
+                logger.warning("No categorized opinions for relationship analysis")
             else:
-                logger.info("[DRY RUN] Would show opinion statistics here")
-            
-            # Add delay between batches to avoid API rate limiting
-            if i + args.batch_size < len(episodes):
-                logger.info(f"Waiting {args.delay} seconds before processing next batch...")
-                if not args.dry_run:
-                    for remaining in range(args.delay, 0, -5):
-                        logger.debug(f"Batch delay: {remaining} seconds remaining")
-                        time.sleep(min(5, remaining))
-                else:
-                    logger.info(f"[DRY RUN] Would wait {args.delay} seconds")
+                logger.info("Analyzing relationships between opinions")
+                relationship_data = relationship_service.analyze_relationships(categorized_opinions)
+                
+                # Save the relationship data to a file for future use
+                save_intermediate_data(relationship_data, args.relationships_file)
+                logger.info(f"Saved {len(relationship_data)} relationships to {args.relationships_file}")
+        else:
+            # Load previously analyzed relationships
+            logger.info(f"Loading relationship data from {args.relationships_file}")
+            relationship_data = load_intermediate_data(args.relationships_file, [])
+            logger.info(f"Loaded {len(relationship_data)} relationships")
+        
+        # Stage 4: Opinion Merging and Saving
+        if run_merging:
+            if not all_raw_opinions or not relationship_data:
+                logger.warning("Missing raw opinions or relationship data for merging")
+            else:
+                logger.info("Processing relationships and merging opinions")
+                final_opinions_data = merger_service.process_relationships(
+                    raw_opinions=all_raw_opinions,
+                    relationship_data=relationship_data
+                )
+                
+                # Create Opinion objects
+                logger.info("Creating final Opinion objects")
+                final_opinions = merger_service.create_opinion_objects(final_opinions_data)
+                
+                # Save opinions to repository
+                if final_opinions:
+                    logger.info(f"Saving {len(final_opinions)} opinions to repository")
+                    merger_service.save_opinions(final_opinions)
+                    
+                    # Show opinion statistics
+                    logger.info("Opinion extraction and merging completed")
+                    show_opinion_statistics(opinion_repo, category_repo, logger)
         
         # Calculate and log overall statistics
         end_time = time.time()
@@ -626,34 +533,12 @@ def main():
         hours, remainder = divmod(total_duration, 3600)
         minutes, seconds = divmod(remainder, 60)
         
-        logger.info("Opinion extraction completed for all episodes!")
         logger.info(f"Total runtime: {int(hours)}h {int(minutes)}m {seconds:.2f}s")
-        logger.info(f"Batch statistics: {successful_batches} successful, {failed_batches} failed, {skipped_batches} skipped")
-        logger.info(f"Total opinions extracted: {total_opinions_extracted}")
-        
-        # Show final opinion statistics
-        logger.info("Final opinion statistics:")
-        if not args.dry_run:
-            # Use data/json repositories for final statistics
-            json_opinion_repo = OpinionRepository(str(opinions_json_file))
-            json_category_repo = CategoryRepository(str(categories_json_file))
-            show_opinion_statistics(json_opinion_repo, json_category_repo, logger)
-        else:
-            logger.info("[DRY RUN] Would show final opinion statistics here")
         
         return 0
-            
+    
     except Exception as e:
-        # Calculate runtime even in case of error
-        end_time = time.time()
-        total_duration = end_time - start_time
-        hours, remainder = divmod(total_duration, 3600)
-        minutes, seconds = divmod(remainder, 60)
-        
-        # Enhanced error logging with traceback
-        logger.error(f"Error: {e}")
-        logger.error(f"Runtime before error: {int(hours)}h {int(minutes)}m {seconds:.2f}s")
-        logger.error("Traceback:", exc_info=True)
+        logging.error(f"Error in opinion extraction: {e}", exc_info=True)
         return 1
 
 if __name__ == "__main__":

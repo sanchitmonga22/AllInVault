@@ -1,0 +1,564 @@
+[
+  {
+    "id": "raw-opinion-1-DprQR7jhd7A",
+    "title": "Trump's COVID-19 Treatment and Its Implications",
+    "description": "The discussion revolves around the implications of President Trump's COVID-19 treatment, particularly the use of polyclonal antibodies, and how this might influence public access to similar treatments.",
+    "category": "health",
+    "episode_id": "DprQR7jhd7A",
+    "episode_title": "E9: Trump has COVID, First debate reactions, Coinbase letter response & more",
+    "episode_date": "2020-10-03T03:05:06",
+    "content": "The president received a treatment that's not publicly available, which could lead to more transparency and public demand for similar treatments.",
+    "speakers": [
+      {
+        "speaker_id": "1",
+        "speaker_name": "Chamath Palihapitiya",
+        "stance": "support",
+        "reasoning": "Believes that Trump's treatment will lead to more transparency and public access to effective COVID-19 treatments.",
+        "start_time": 164.7,
+        "end_time": 240.8
+      },
+      {
+        "speaker_id": "0",
+        "speaker_name": "David Sacks",
+        "stance": "neutral",
+        "reasoning": "Discusses the political ramifications and how Trump's recovery could impact his election chances.",
+        "start_time": 240.8,
+        "end_time": 287.0
+      },
+      {
+        "speaker_id": "3",
+        "speaker_name": "David Friedberg",
+        "stance": "support",
+        "reasoning": "Explains the science behind the treatment and its potential as a future model for infectious disease management.",
+        "start_time": 558.5,
+        "end_time": 620.9
+      }
+    ],
+    "keywords": [
+      "COVID-19",
+      "Trump",
+      "treatment",
+      "polyclonal antibodies",
+      "public access"
+    ]
+  },
+  {
+    "id": "raw-opinion-2-DprQR7jhd7A",
+    "title": "Political Ramifications of Trump's COVID-19 Diagnosis",
+    "description": "The potential impact of Trump's COVID-19 diagnosis on the upcoming election is discussed, considering both the possibility of his recovery and the political narrative that could follow.",
+    "category": "politics",
+    "episode_id": "DprQR7jhd7A",
+    "episode_title": "E9: Trump has COVID, First debate reactions, Coinbase letter response & more",
+    "episode_date": "2020-10-03T03:05:06",
+    "content": "If Trump recovers quickly, it could be seen as a sign of strength and potentially boost his election chances.",
+    "speakers": [
+      {
+        "speaker_id": "3",
+        "speaker_name": "David Friedberg",
+        "stance": "support",
+        "reasoning": "Believes that a quick recovery could be spun as a political strength.",
+        "start_time": 747.2,
+        "end_time": 800.8
+      },
+      {
+        "speaker_id": "0",
+        "speaker_name": "David Sacks",
+        "stance": "support",
+        "reasoning": "Considers the potential for Trump's recovery to be used as a political advantage.",
+        "start_time": 444.8,
+        "end_time": 493.5
+      }
+    ],
+    "keywords": [
+      "Trump",
+      "COVID-19",
+      "election",
+      "political impact"
+    ]
+  },
+  {
+    "id": "raw-opinion-3-DprQR7jhd7A",
+    "title": "The Role of Workplace Politics",
+    "description": "The discussion focuses on Brian Armstrong's stance on keeping politics out of the workplace at Coinbase, emphasizing the importance of maintaining focus on the company's mission.",
+    "category": "business",
+    "episode_id": "DprQR7jhd7A",
+    "episode_title": "E9: Trump has COVID, First debate reactions, Coinbase letter response & more",
+    "episode_date": "2020-10-03T03:05:06",
+    "content": "Brian Armstrong's manifesto argues for leaving politics at the door to maintain focus on Coinbase's mission.",
+    "speakers": [
+      {
+        "speaker_id": "3",
+        "speaker_name": "David Sacks",
+        "stance": "support",
+        "reasoning": "Believes that politics is inherently divisive and distracts from the company's mission.",
+        "start_time": 2232.4,
+        "end_time": 2318.2
+      },
+      {
+        "speaker_id": "2",
+        "speaker_name": "Jason Calacanis",
+        "stance": "support",
+        "reasoning": "Agrees with the need to avoid political distractions in the workplace.",
+        "start_time": 2785.2,
+        "end_time": 2900.5
+      },
+      {
+        "speaker_id": "1",
+        "speaker_name": "Chamath Palihapitiya",
+        "stance": "oppose",
+        "reasoning": "Criticizes the execution of the message, suggesting a more nuanced approach to integrating mission-related political issues.",
+        "start_time": 2479.4,
+        "end_time": 2618.2
+      }
+    ],
+    "keywords": [
+      "Coinbase",
+      "workplace politics",
+      "Brian Armstrong",
+      "company mission"
+    ]
+  },
+  {
+    "id": "raw-opinion-4-DprQR7jhd7A",
+    "title": "Impact of Trump's Debate Performance",
+    "description": "The speakers analyze Trump's performance in the first presidential debate, discussing its potential impact on his re-election campaign.",
+    "category": "politics",
+    "episode_id": "DprQR7jhd7A",
+    "episode_title": "E9: Trump has COVID, First debate reactions, Coinbase letter response & more",
+    "episode_date": "2020-10-03T03:05:06",
+    "content": "Trump's aggressive debate style may have been counterproductive, potentially alienating undecided voters.",
+    "speakers": [
+      {
+        "speaker_id": "3",
+        "speaker_name": "David Sacks",
+        "stance": "oppose",
+        "reasoning": "Believes Trump's interruptions were counterproductive and did not help him with undecided voters.",
+        "start_time": 1293.5,
+        "end_time": 1362.5
+      },
+      {
+        "speaker_id": "2",
+        "speaker_name": "Jason Calacanis",
+        "stance": "oppose",
+        "reasoning": "Describes Trump's behavior as pathetic and scared, potentially alienating key demographics.",
+        "start_time": 1422.1,
+        "end_time": 1476.6
+      }
+    ],
+    "keywords": [
+      "Trump",
+      "debate",
+      "election",
+      "performance"
+    ]
+  },
+  {
+    "id": "raw-opinion-5-DprQR7jhd7A",
+    "title": "Economic Separation from Politics",
+    "description": "The discussion touches on the perceived separation of the economy from political influence, particularly in the context of Trump's COVID-19 diagnosis.",
+    "category": "economics",
+    "episode_id": "DprQR7jhd7A",
+    "episode_title": "E9: Trump has COVID, First debate reactions, Coinbase letter response & more",
+    "episode_date": "2020-10-03T03:05:06",
+    "content": "The stock market's lack of reaction to Trump's diagnosis suggests a separation of the economy from political influence.",
+    "speakers": [
+      {
+        "speaker_id": "2",
+        "speaker_name": "Jason Calacanis",
+        "stance": "support",
+        "reasoning": "Believes that the economy is now seen as separate from political events, as evidenced by the stock market's reaction.",
+        "start_time": 1859.9,
+        "end_time": 1891.2
+      }
+    ],
+    "keywords": [
+      "economy",
+      "politics",
+      "stock market",
+      "Trump"
+    ]
+  },
+  {
+    "id": "raw-opinion-6-0uf-F0ssFP0",
+    "title": "SPACs as a New IPO Model",
+    "description": "The speakers discuss the rise of SPACs as an alternative to traditional IPOs, highlighting their benefits for companies and investors.",
+    "category": "finance",
+    "episode_id": "0uf-F0ssFP0",
+    "episode_title": "E7: California's collapse, how SPACs are opening the markets for growth stocks & more",
+    "episode_date": "2020-09-09T04:48:27",
+    "content": "I said, wanna basically create a new way of doing IPOs. I called it IPO two point zero. I reserved IPO A through Z on the NYSE. I hope to fulfill that and I think I will.",
+    "speakers": [
+      {
+        "speaker_id": "1",
+        "speaker_name": "Chamath Palihapitiya",
+        "stance": "support",
+        "reasoning": "Chamath is a proponent of SPACs, seeing them as a more efficient way for companies to go public.",
+        "start_time": 3260.9,
+        "end_time": 3318.1
+      },
+      {
+        "speaker_id": "2",
+        "speaker_name": "David Sacks",
+        "stance": "support",
+        "reasoning": "David supports SPACs for their simplicity and appeal to founders compared to traditional IPOs.",
+        "start_time": 3467.5,
+        "end_time": 3562.6
+      }
+    ],
+    "keywords": [
+      "SPACs",
+      "IPO",
+      "public markets",
+      "investment"
+    ]
+  },
+  {
+    "id": "raw-opinion-7--XgCOfvSKDQ",
+    "title": "Zuckerberg's Free Speech Stance",
+    "description": "Mark Zuckerberg's stance on maintaining Facebook as a neutral free speech platform is philosophically defensible but socially challenging.",
+    "category": "society",
+    "episode_id": "-XgCOfvSKDQ",
+    "episode_title": "E6: Big Tech antitrust aftermath, potential effects of an M&A clampdown on Silicon Valley & more",
+    "episode_date": "2020-07-31T23:20:55",
+    "content": "I think Zuck's position is the most defensible, but it also is the most untenable because it's the least technologically Elder. And to socially palatable.",
+    "speakers": [
+      {
+        "speaker_id": "1",
+        "speaker_name": "Jason Calacanis",
+        "stance": "support",
+        "reasoning": "Believes Zuckerberg's commitment to free speech is philosophically sound but difficult to maintain in practice.",
+        "start_time": 2553.6,
+        "end_time": 2577.3
+      }
+    ],
+    "keywords": [
+      "free speech",
+      "Zuckerberg",
+      "Facebook"
+    ]
+  },
+  {
+    "id": "raw-opinion-8--XgCOfvSKDQ",
+    "title": "Impact of Anonymity on Social Media",
+    "description": "Anonymity on platforms like Twitter contributes to issues of misinformation and polarization, and removing it could improve discourse quality.",
+    "category": "technology",
+    "episode_id": "-XgCOfvSKDQ",
+    "episode_title": "E6: Big Tech antitrust aftermath, potential effects of an M&A clampdown on Silicon Valley & more",
+    "episode_date": "2020-07-31T23:20:55",
+    "content": "Without anonymity, I think the problem goes away for Twitter.",
+    "speakers": [
+      {
+        "speaker_id": "1",
+        "speaker_name": "Jason Calacanis",
+        "stance": "support",
+        "reasoning": "Believes that anonymity allows for trolling and misinformation, which could be mitigated by requiring real identities.",
+        "start_time": 2778.4,
+        "end_time": 2906.8
+      }
+    ],
+    "keywords": [
+      "anonymity",
+      "social media",
+      "misinformation"
+    ]
+  },
+  {
+    "id": "raw-opinion-9--XgCOfvSKDQ",
+    "title": "Potential for a Constitutional Crisis Post-Election",
+    "description": "There is a significant risk of a constitutional crisis following the election due to disputes over mail-in voting and election legitimacy.",
+    "category": "politics",
+    "episode_id": "-XgCOfvSKDQ",
+    "episode_title": "E6: Big Tech antitrust aftermath, potential effects of an M&A clampdown on Silicon Valley & more",
+    "episode_date": "2020-07-31T23:20:55",
+    "content": "55% of supporters of Donald Trump say that they will not accept the election victory of Joe Biden if mail in votes are are allowed.",
+    "speakers": [
+      {
+        "speaker_id": "2",
+        "speaker_name": "David Sacks",
+        "stance": "support",
+        "reasoning": "Believes the polarization and disputes over mail-in voting could lead to a crisis.",
+        "start_time": 5255.6,
+        "end_time": 5286.9
+      }
+    ],
+    "keywords": [
+      "constitutional crisis",
+      "election",
+      "mail-in voting"
+    ]
+  },
+  {
+    "id": "raw-opinion-10-zWFXRewP_FI",
+    "title": "Wet Markets and Global Health Risks",
+    "description": "David Friedberg and Chamath Palihapitiya discuss the role of wet markets in the spread of viruses and the need for global health standards.",
+    "category": "health",
+    "episode_id": "zWFXRewP_FI",
+    "episode_title": "E1: US Response to COVID-19 & Impact on Startups, VC & Public Markets with David Friedberg",
+    "episode_date": "2020-03-19T02:26:50",
+    "content": "I think they're fucking awful and stupid, and they should be shut down, cultural, you know, dependence aside.",
+    "speakers": [
+      {
+        "speaker_id": "1",
+        "speaker_name": "David Friedberg",
+        "stance": "oppose",
+        "reasoning": "He believes wet markets pose a significant health risk and should be shut down.",
+        "start_time": 4769.3,
+        "end_time": 4868.8
+      },
+      {
+        "speaker_id": "2",
+        "speaker_name": "Chamath Palihapitiya",
+        "stance": "support",
+        "reasoning": "He suggests that global health standards should be established to prevent such risks.",
+        "start_time": 4868.8,
+        "end_time": 5052.7
+      }
+    ],
+    "keywords": [
+      "wet markets",
+      "global health",
+      "COVID-19"
+    ]
+  },
+  {
+    "id": "raw-opinion-001-fZodR6T8cU0",
+    "title": "WHO's Incompetence and Political Influence",
+    "description": "The speakers discuss the perceived incompetence of the World Health Organization (WHO) and its susceptibility to political influence, particularly in the context of the COVID-19 pandemic and previous controversies like the glyphosate carcinogenicity claims.",
+    "category": "health",
+    "episode_id": "fZodR6T8cU0",
+    "episode_title": "E5: WHO's incompetence, kicking off Cold War II, China's grand plan, 100X'ing American efficiency",
+    "episode_date": "2020-07-11T02:15:22",
+    "content": "The WHO is criticized for its slow response to COVID-19, particularly regarding mask usage and airborne transmission. The organization is described as politically influenced, reversing scientific findings to fit political narratives.",
+    "speakers": [
+      {
+        "speaker_id": "3",
+        "speaker_name": "Unknown Speaker 3",
+        "stance": "oppose",
+        "reasoning": "Describes how political maneuvering within WHO led to glyphosate being labeled as a carcinogen, despite scientific evidence to the contrary.",
+        "start_time": 512.4,
+        "end_time": 713.2
+      },
+      {
+        "speaker_id": "1",
+        "speaker_name": "Jason Calacanis",
+        "stance": "oppose",
+        "reasoning": "Criticizes WHO for not having a definitive stance on masks and airborne transmission, suggesting political motivations over scientific integrity.",
+        "start_time": 715.7,
+        "end_time": 793.0
+      },
+      {
+        "speaker_id": "2",
+        "speaker_name": "Chamath Palihapitiya",
+        "stance": "oppose",
+        "reasoning": "Argues that WHO's actions are politically motivated rather than scientifically driven, affecting public health decisions.",
+        "start_time": 793.0,
+        "end_time": 877.8
+      }
+    ],
+    "keywords": [
+      "WHO",
+      "incompetence",
+      "political influence",
+      "COVID-19",
+      "glyphosate"
+    ]
+  },
+  {
+    "id": "raw-opinion-002-fZodR6T8cU0",
+    "title": "Cold War II with China",
+    "description": "The speakers discuss the emergence of a new Cold War with China, focusing on economic and technological competition, particularly in areas like 5G technology and manufacturing.",
+    "category": "politics",
+    "episode_id": "fZodR6T8cU0",
+    "episode_title": "E5: WHO's incompetence, kicking off Cold War II, China's grand plan, 100X'ing American efficiency",
+    "episode_date": "2020-07-11T02:15:22",
+    "content": "The new Cold War with China is characterized by economic and technological battles, such as the embargo on Huawei and the strategic importance of 5G technology.",
+    "speakers": [
+      {
+        "speaker_id": "2",
+        "speaker_name": "Chamath Palihapitiya",
+        "stance": "support",
+        "reasoning": "Believes the embargo on Huawei marks the beginning of Cold War II, emphasizing the strategic importance of 5G technology.",
+        "start_time": 1674.6,
+        "end_time": 1709.5
+      },
+      {
+        "speaker_id": "0",
+        "speaker_name": "David Sacks",
+        "stance": "support",
+        "reasoning": "Agrees that the geopolitical significance of technology, like 5G chips, is akin to oil, highlighting vulnerabilities in American trade policy.",
+        "start_time": 1924.4,
+        "end_time": 2004.6
+      }
+    ],
+    "keywords": [
+      "Cold War II",
+      "China",
+      "Huawei",
+      "5G",
+      "technology"
+    ]
+  },
+  {
+    "id": "raw-opinion-003-fZodR6T8cU0",
+    "title": "Rebuilding American Manufacturing",
+    "description": "The speakers discuss the need for the United States to rebuild its manufacturing capabilities to reduce dependence on China and enhance national security.",
+    "category": "economics",
+    "episode_id": "fZodR6T8cU0",
+    "episode_title": "E5: WHO's incompetence, kicking off Cold War II, China's grand plan, 100X'ing American efficiency",
+    "episode_date": "2020-07-11T02:15:22",
+    "content": "There is a call for American leadership to prioritize manufacturing resilience over efficiency, rebuilding American industry and jobs.",
+    "speakers": [
+      {
+        "speaker_id": "1",
+        "speaker_name": "Jason Calacanis",
+        "stance": "support",
+        "reasoning": "Argues for the necessity of American manufacturing independence, suggesting that the U.S. has the capability to build its own factories.",
+        "start_time": 2004.6,
+        "end_time": 2038.5
+      },
+      {
+        "speaker_id": "2",
+        "speaker_name": "Chamath Palihapitiya",
+        "stance": "support",
+        "reasoning": "Emphasizes the shift from efficiency to resilience, advocating for domestic production of critical technologies and materials.",
+        "start_time": 2074.3,
+        "end_time": 2197.6
+      }
+    ],
+    "keywords": [
+      "manufacturing",
+      "resilience",
+      "national security",
+      "independence"
+    ]
+  },
+  {
+    "id": "raw-opinion-004-fZodR6T8cU0",
+    "title": "China's Strategic Influence",
+    "description": "The speakers discuss China's strategic global influence through economic investments and its implications for the United States.",
+    "category": "politics",
+    "episode_id": "fZodR6T8cU0",
+    "episode_title": "E5: WHO's incompetence, kicking off Cold War II, China's grand plan, 100X'ing American efficiency",
+    "episode_date": "2020-07-11T02:15:22",
+    "content": "China is seen as strategically buying influence globally, focusing on economic rather than ideological dominance.",
+    "speakers": [
+      {
+        "speaker_id": "2",
+        "speaker_name": "Chamath Palihapitiya",
+        "stance": "support",
+        "reasoning": "Describes China's strategy as focusing on economic influence, buying productivity blocks rather than ideological dominance.",
+        "start_time": 1418.5,
+        "end_time": 1584.8
+      },
+      {
+        "speaker_id": "3",
+        "speaker_name": "Unknown Speaker 3",
+        "stance": "neutral",
+        "reasoning": "Explains China's actions as driven by a desire to increase influence and security, not necessarily as a direct attack on the U.S.",
+        "start_time": 2254.4,
+        "end_time": 2431.9
+      }
+    ],
+    "keywords": [
+      "China",
+      "influence",
+      "strategy",
+      "economic dominance"
+    ]
+  },
+  {
+    "id": "raw-opinion-005-fZodR6T8cU0",
+    "title": "Education and Socialization During COVID-19",
+    "description": "The speakers discuss the impact of COVID-19 on education, emphasizing the importance of socialization for children and the challenges of remote learning.",
+    "category": "education",
+    "episode_id": "fZodR6T8cU0",
+    "episode_title": "E5: WHO's incompetence, kicking off Cold War II, China's grand plan, 100X'ing American efficiency",
+    "episode_date": "2020-07-11T02:15:22",
+    "content": "There is a concern about the social and psychological impact on children due to prolonged isolation from peers, with a preference for reopening schools safely.",
+    "speakers": [
+      {
+        "speaker_id": "1",
+        "speaker_name": "Jason Calacanis",
+        "stance": "support",
+        "reasoning": "Plans to start a micro school to ensure his children receive social interaction and quality education during the pandemic.",
+        "start_time": 4544.7,
+        "end_time": 4620.7
+      },
+      {
+        "speaker_id": "2",
+        "speaker_name": "Chamath Palihapitiya",
+        "stance": "support",
+        "reasoning": "Emphasizes the importance of socialization for children's development, advocating for reopening schools with safety measures.",
+        "start_time": 4620.7,
+        "end_time": 4704.3
+      }
+    ],
+    "keywords": [
+      "COVID-19",
+      "education",
+      "socialization",
+      "children",
+      "schools"
+    ]
+  },
+  {
+    "id": "raw-opinion-006-RAjxkslflQg",
+    "title": "Biden's VP Choice and Electoral Strategy",
+    "description": "The importance of Biden's choice for Vice President and its potential impact on the election outcome is discussed.",
+    "category": "politics",
+    "episode_id": "RAjxkslflQg",
+    "episode_title": "E4: Politicizing the pandemic, Police reform, Twitter vs Facebook with David Sacks & David Friedberg",
+    "episode_date": "2020-06-20T02:45:29",
+    "content": "It comes down to who does Biden pick as a running mate? Can he lock up the swing states with that running mate?",
+    "speakers": [
+      {
+        "speaker_id": "1",
+        "speaker_name": "Chamath Palihapitiya",
+        "stance": "support",
+        "reasoning": "Chamath believes Biden's VP choice is crucial for winning swing states and securing the election.",
+        "start_time": 4192.7,
+        "end_time": 4252.9
+      }
+    ],
+    "keywords": [
+      "Biden",
+      "VP choice",
+      "election",
+      "swing states"
+    ]
+  },
+  {
+    "id": "raw-opinion-007-RAjxkslflQg",
+    "title": "Trump's Re-election Chances",
+    "description": "The panel discusses Trump's chances of winning re-election, considering his handling of COVID-19 and social unrest.",
+    "category": "politics",
+    "episode_id": "RAjxkslflQg",
+    "episode_title": "E4: Politicizing the pandemic, Police reform, Twitter vs Facebook with David Sacks & David Friedberg",
+    "episode_date": "2020-06-20T02:45:29",
+    "content": "If the election were today, he would lose. But the economy is coming back, and the situation could look very different in five months.",
+    "speakers": [
+      {
+        "speaker_id": "2",
+        "speaker_name": "David Sacks",
+        "stance": "neutral",
+        "reasoning": "David acknowledges Trump's current disadvantage but notes potential changes in the economic and political landscape.",
+        "start_time": 4080.3,
+        "end_time": 4140.7
+      },
+      {
+        "speaker_id": "3",
+        "speaker_name": "David Friedberg",
+        "stance": "support",
+        "reasoning": "David believes Trump will win due to his ability to position himself as an agent of change and lay blame on external factors.",
+        "start_time": 4262.6,
+        "end_time": 4364.3
+      }
+    ],
+    "keywords": [
+      "Trump",
+      "re-election",
+      "COVID-19",
+      "social unrest"
+    ]
+  }
+]

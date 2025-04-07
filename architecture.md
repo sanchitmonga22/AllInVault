@@ -478,3 +478,144 @@ The opinion evolution tracking process works as follows:
 3. Create visualizations of opinion evolution
 4. Add support for topic clustering
 5. Develop an opinion search and filtering interface
+
+## Opinion Extraction System
+
+The opinion extraction system in AllInVault is designed to accurately extract, categorize, track, and merge opinions from podcast transcripts. The system uses a multi-stage approach to address context size limitations and improve accuracy.
+
+### System Architecture Diagram
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                            Opinion Extraction Service                         │
+└───────────────────────────────────┬──────────────────────────────────────────┘
+                                   │
+                                   │ Orchestrates
+                                   ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                                                                              │
+│  ┌───────────────────┐    ┌──────────────────┐    ┌─────────────────────┐   │
+│  │                   │    │                  │    │                     │   │
+│  │ Raw Extraction    ├───►│ Categorization   ├───►│ Relationship        │   │
+│  │ Service           │    │ Service          │    │ Analysis Service    │   │
+│  │                   │    │                  │    │                     │   │
+│  └───────────────────┘    └──────────────────┘    └──────────┬──────────┘   │
+│                                                              │              │
+│                                                              ▼              │
+│                                                   ┌─────────────────────┐   │
+│                                                   │                     │   │
+│                                                   │ Merger Service      │   │
+│                                                   │                     │   │
+│                                                   └──────────┬──────────┘   │
+│                                                              │              │
+└──────────────────────────────────────────────────────────────┼──────────────┘
+                                                              │
+                                                              ▼
+                                         ┌──────────────────────────────────────┐
+                                         │                                      │
+                                         │ Opinion Repository                   │
+                                         │                                      │
+                                         └──────────────────────────────────────┘
+```
+
+### Component Responsibilities
+
+1. **Opinion Extraction Service**
+   - Main orchestration service
+   - Initializes and coordinates the other services
+   - Provides a high-level API for the application
+
+2. **Raw Extraction Service**
+   - Extracts raw opinions from individual episode transcripts
+   - Focuses on high-quality extraction without considering cross-episode relationships
+   - Captures complete speaker metadata (ID, name, timestamps, stance, reasoning)
+
+3. **Categorization Service**
+   - Standardizes opinion categories
+   - Groups opinions by category for focused relationship analysis
+   - Maps custom categories to standard ones
+
+4. **Relationship Analysis Service**
+   - Analyzes relationships between opinions in the same category
+   - Identifies SAME_OPINION, RELATED, EVOLUTION, and CONTRADICTION relationships
+   - Processes opinions in manageable batches
+
+5. **Merger Service**
+   - Merges opinions that represent the same core opinion
+   - Processes relationship links between opinions
+   - Creates structured Opinion objects with all metadata
+
+6. **Opinion Repository**
+   - Handles persistence of opinions
+   - Provides methods to retrieve existing opinions
+   - Ensures efficient storage and retrieval
+
+### Multi-Stage Workflow
+
+The system follows a clearly defined workflow:
+
+1. **Raw Opinion Extraction**
+   - Process each episode individually
+   - Extract detailed opinion data with speaker information
+   - Focus on quality extraction without cross-episode context
+
+2. **Categorization**
+   - Standardize categories across all opinions
+   - Group opinions by category for focused analysis
+
+3. **Relationship Analysis**
+   - Process opinions within the same category
+   - Identify relationships between opinions
+   - Analyze in smaller batches to avoid context limits
+
+4. **Opinion Merging and Finalization**
+   - Merge related opinions 
+   - Establish contradiction and evolution links
+   - Create final Opinion objects with all metadata
+
+5. **Storage**
+   - Save opinions to the repository
+   - Update episode metadata with references to opinions
+
+### Data Models
+
+The system uses three main data models:
+
+1. **Opinion**
+   - Represents a unique opinion that can appear across episodes
+   - Contains metadata, appearances, and relationship info
+
+2. **OpinionAppearance**  
+   - Represents a specific appearance of an opinion in an episode
+   - Contains episode metadata and speaker information
+
+3. **SpeakerStance**
+   - Represents a speaker's stance on an opinion
+   - Contains detailed speaker metadata and timestamps
+
+### Benefits of This Architecture
+
+1. **Scalability**
+   - Processes episodes incrementally
+   - Handles large numbers of opinions efficiently
+   - Divides work into manageable chunks
+
+2. **Accuracy**
+   - Multi-stage approach improves opinion extraction quality
+   - Categorized relationship analysis reduces noise
+   - Detailed speaker metadata enables better tracking
+
+3. **Maintainability**
+   - Clear separation of concerns
+   - Modular components that can be improved independently
+   - Well-defined interfaces between components
+
+4. **Flexibility**
+   - Easy to add new relationship types
+   - Can be extended with additional analysis steps
+   - Configurable parameters for tuning performance
+
+5. **Resilience**
+   - Each stage has independent error handling
+   - Failed operations can be retried without affecting others
+   - Detailed logging helps identify and fix issues

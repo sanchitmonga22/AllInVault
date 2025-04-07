@@ -1,0 +1,44 @@
+[
+  {
+    "source_id": "raw-opinion-10-zWFXRewP_FI",
+    "target_id": "raw-opinion-001-fZodR6T8cU0",
+    "relation_type": "related",
+    "notes": "Both opinions discuss global health issues and criticize institutions or practices that influence health outcomes, such as wet markets and WHO's response to COVID-19."
+  },
+  {
+    "source_id": "raw-opinion-001-fZodR6T8cU0",
+    "target_id": "raw-opinion-1-DprQR7jhd7A",
+    "relation_type": "related",
+    "notes": "Both opinions involve critiques of responses to COVID-19, with one focusing on WHO's response and the other on the implications of Trump's treatment, highlighting issues of transparency and access."
+  },
+  {
+    "source_id": "raw-opinion-10-zWFXRewP_FI",
+    "target_id": "raw-opinion-1-DprQR7jhd7A",
+    "relation_type": "related",
+    "notes": "Both opinions involve discussions on COVID-19 and public health, with one focusing on wet markets and the other on treatment access and implications, reflecting broader concerns about health policy and equity."
+  },
+  {
+    "source_id": "raw-opinion-006-RAjxkslflQg",
+    "target_id": "raw-opinion-007-RAjxkslflQg",
+    "relation_type": "related",
+    "notes": "Both opinions discuss factors influencing the 2020 U.S. presidential election, with one focusing on Biden's VP choice and the other on Trump's re-election chances."
+  },
+  {
+    "source_id": "raw-opinion-002-fZodR6T8cU0",
+    "target_id": "raw-opinion-004-fZodR6T8cU0",
+    "relation_type": "related",
+    "notes": "Both opinions discuss China's global influence, with one focusing on economic and technological competition and the other on strategic investments."
+  },
+  {
+    "source_id": "raw-opinion-9--XgCOfvSKDQ",
+    "target_id": "raw-opinion-2-DprQR7jhd7A",
+    "relation_type": "related",
+    "notes": "Both opinions discuss potential impacts on the 2020 U.S. election, with one focusing on a constitutional crisis and the other on Trump's COVID-19 diagnosis."
+  },
+  {
+    "source_id": "raw-opinion-2-DprQR7jhd7A",
+    "target_id": "raw-opinion-4-DprQR7jhd7A",
+    "relation_type": "related",
+    "notes": "Both opinions analyze factors affecting Trump's re-election chances, with one focusing on his COVID-19 diagnosis and the other on his debate performance."
+  }
+]
