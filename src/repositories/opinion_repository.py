@@ -17,6 +17,15 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+class DateTimeEncoder(json.JSONEncoder):
+    """Custom JSON encoder for datetime objects."""
+    
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        return super().default(obj)
+
+
 class OpinionRepository:
     """Repository for opinion data with JSON file storage."""
     
@@ -71,7 +80,7 @@ class OpinionRepository:
             data = {"opinions": opinions_list}
             
             with open(self.opinions_file_path, 'w') as f:
-                json.dump(data, f, indent=2)
+                json.dump(data, f, indent=2, cls=DateTimeEncoder)
                 
             logger.info(f"Saved {len(self.opinions)} opinions to {self.opinions_file_path}")
             
@@ -123,17 +132,17 @@ class OpinionRepository:
         """
         return [op for op in self.opinions.values() if op.episode_id == episode_id]
     
-    def get_opinions_by_category(self, category: str) -> List[Opinion]:
+    def get_opinions_by_category(self, category_id: str) -> List[Opinion]:
         """
         Get all opinions belonging to a specific category.
         
         Args:
-            category: Category to filter by
+            category_id: Category ID to filter by
             
         Returns:
             List of opinions in the category
         """
-        return [op for op in self.opinions.values() if op.category and op.category.lower() == category.lower()]
+        return [op for op in self.opinions.values() if op.category_id == category_id]
     
     def get_related_opinions(self, opinion_id: str) -> List[Opinion]:
         """
