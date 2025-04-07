@@ -23,6 +23,7 @@ from src.services.downloader_service import YtDlpDownloader
 from src.services.episode_analyzer import EpisodeAnalyzerService
 from src.services.batch_transcriber import BatchTranscriberService
 from src.services.speaker_identification_service import SpeakerIdentificationService
+from src.services.opinion_extractor_service import OpinionExtractorService
 from src.utils.config import load_config, AppConfig
 
 # Configure logging
@@ -44,6 +45,7 @@ class PipelineStage(Enum):
     CONVERT_AUDIO = auto()
     TRANSCRIBE_AUDIO = auto()
     IDENTIFY_SPEAKERS = auto()
+    EXTRACT_OPINIONS = auto()
 
 
 class StageResult:
@@ -548,6 +550,83 @@ class IdentifySpeakersStage(AbstractStage):
             return StageResult(success=False, error=e, message=f"Failed to identify speakers: {str(e)}")
 
 
+class ExtractOpinionsStage(AbstractStage):
+    """Stage for extracting opinions from transcripts."""
+    
+    def __init__(self, repository: JsonFileRepository, config: AppConfig):
+        super().__init__(PipelineStage.EXTRACT_OPINIONS, repository, config)
+        self.dependencies.add(PipelineStage.IDENTIFY_SPEAKERS)
+        
+    def execute(self, episode_ids: Optional[List[str]] = None, **kwargs) -> StageResult:
+        """
+        Extract opinions from transcripts.
+        
+        Args:
+            episode_ids: List of video IDs to process, or None for all episodes with transcripts
+            **kwargs:
+                transcripts_dir: Directory containing transcripts
+                use_llm: Whether to use LLM for opinion extraction
+                llm_provider: LLM provider to use
+                force_reidentify: Whether to force re-identification of speakers
+                
+        Returns:
+            StageResult containing the updated episode objects
+        """
+        try:
+            transcripts_dir = kwargs.get('transcripts_dir', str(self.config.transcripts_dir))
+            use_llm = kwargs.get('use_llm', True)
+            llm_provider = kwargs.get('llm_provider', 'openai')
+            force_reidentify = kwargs.get('force_reidentify', False)
+            
+            # Initialize opinion extraction service with appropriate settings
+            opinion_extractor = OpinionExtractorService(
+                use_llm=use_llm,
+                llm_provider=llm_provider
+            )
+            
+            # Determine episodes to process
+            if episode_ids and len(episode_ids) > 0:
+                logger.info(f"Extracting opinions for specific episodes: {episode_ids}")
+                episodes_to_process = []
+                for video_id in episode_ids:
+                    episode = self.repository.get_episode(video_id)
+                    if episode and episode.transcript_filename:
+                        episodes_to_process.append(episode)
+            else:
+                # Get all episodes with transcripts
+                logger.info("Extracting opinions for all episodes with transcripts")
+                all_episodes = self.repository.get_all_episodes()
+                episodes_to_process = [ep for ep in all_episodes if ep.transcript_filename]
+            
+            if not episodes_to_process:
+                logger.warning("No episodes to process for opinion extraction")
+                return StageResult(success=True, data=[], message="No episodes to process for opinion extraction")
+            
+            logger.info(f"Extracting opinions for {len(episodes_to_process)} episodes")
+            
+            # Extract opinions
+            updated_episodes = opinion_extractor.extract_opinions(
+                episodes_to_process,
+                transcripts_dir=transcripts_dir
+            )
+            
+            logger.info(f"Opinion extraction complete for {len(updated_episodes)} episodes")
+            
+            # Ensure repository is updated
+            for episode in updated_episodes:
+                self.repository.save_episode(episode)
+            
+            return StageResult(
+                success=True, 
+                data=updated_episodes, 
+                message=f"Successfully extracted opinions for {len(updated_episodes)} episodes"
+            )
+            
+        except Exception as e:
+            logger.error(f"Error extracting opinions: {str(e)}")
+            return StageResult(success=False, error=e, message=f"Failed to extract opinions: {str(e)}")
+
+
 class PipelineOrchestrator:
     """
     Orchestrates the podcast processing pipeline with flexible stage execution.
@@ -570,7 +649,8 @@ class PipelineOrchestrator:
             PipelineStage.DOWNLOAD_AUDIO: DownloadAudioStage(self.repository, self.config),
             PipelineStage.CONVERT_AUDIO: ConvertAudioStage(self.repository, self.config),
             PipelineStage.TRANSCRIBE_AUDIO: TranscribeAudioStage(self.repository, self.config),
-            PipelineStage.IDENTIFY_SPEAKERS: IdentifySpeakersStage(self.repository, self.config)
+            PipelineStage.IDENTIFY_SPEAKERS: IdentifySpeakersStage(self.repository, self.config),
+            PipelineStage.EXTRACT_OPINIONS: ExtractOpinionsStage(self.repository, self.config)
         }
         
         # Track stage results
@@ -655,7 +735,7 @@ class PipelineOrchestrator:
             start_stage = PipelineStage.FETCH_METADATA
             
         if end_stage is None:
-            end_stage = PipelineStage.IDENTIFY_SPEAKERS
+            end_stage = PipelineStage.EXTRACT_OPINIONS
             
         # Get all stages in the pipeline
         all_stages = [
@@ -664,7 +744,8 @@ class PipelineOrchestrator:
             PipelineStage.DOWNLOAD_AUDIO,
             PipelineStage.CONVERT_AUDIO,
             PipelineStage.TRANSCRIBE_AUDIO,
-            PipelineStage.IDENTIFY_SPEAKERS
+            PipelineStage.IDENTIFY_SPEAKERS,
+            PipelineStage.EXTRACT_OPINIONS
         ]
         
         # Determine the slice of stages to execute

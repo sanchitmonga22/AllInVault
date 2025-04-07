@@ -238,7 +238,9 @@ def main():
     stage_group.add_argument(
         "--stages", 
         type=str,
-        help="Comma-separated list of stages to execute (options: fetch_metadata, analyze_episodes, download_audio, convert_audio, transcribe_audio, identify_speakers)"
+        help=('Comma-separated list of stages to execute. Available stages: '
+              'FETCH_METADATA, ANALYZE_EPISODES, DOWNLOAD_AUDIO, CONVERT_AUDIO, '
+              'TRANSCRIBE_AUDIO, IDENTIFY_SPEAKERS, EXTRACT_OPINIONS')
     )
     
     stage_group.add_argument(

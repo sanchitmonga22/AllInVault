@@ -33,6 +33,20 @@ class LLMProvider(ABC):
         """
         pass
 
+    @abstractmethod
+    def extract_opinions_from_transcript(self, prompt: str, episode_metadata: Dict) -> Dict:
+        """
+        Extract opinions from transcript using LLM.
+        
+        Args:
+            prompt: The formatted prompt for opinion extraction
+            episode_metadata: Dictionary with episode metadata for context
+            
+        Returns:
+            Dictionary with extracted opinions
+        """
+        pass
+
 
 class OpenAIProvider(LLMProvider):
     """OpenAI implementation of LLM provider."""
@@ -208,6 +222,78 @@ class OpenAIProvider(LLMProvider):
         except Exception as e:
             logger.error(f"Error calling OpenAI API: {e}")
             return {"hosts": [], "guests": []}
+    
+    def extract_opinions_from_transcript(self, prompt: str, episode_metadata: Dict) -> Dict:
+        """
+        Extract opinions from transcript using OpenAI.
+        
+        Args:
+            prompt: The formatted prompt for opinion extraction
+            episode_metadata: Dictionary with episode metadata for context
+            
+        Returns:
+            Dictionary with extracted opinions data
+        """
+        try:
+            # Log the prompt being sent to the API (truncated for brevity)
+            logger.info(f"Sending opinion extraction prompt to OpenAI (first 500 chars):\n{prompt[:500]}...")
+            
+            # Try using newer OpenAI API version first
+            try:
+                # Compatible with openai>=1.0.0
+                from openai import OpenAI
+                client = OpenAI(api_key=self.api_key)
+                
+                response = client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": "You are a helpful assistant that extracts opinions from podcast transcripts. Return structured data in JSON format."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    response_format={"type": "json_object"},
+                    temperature=0.3,  # Lower temperature for more consistent, focused results
+                    max_tokens=4000  # Allow for more detailed response
+                )
+                
+                content = response.choices[0].message.content
+            except (ImportError, AttributeError):
+                # Fallback to older OpenAI API version
+                response = openai.ChatCompletion.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": "You are a helpful assistant that extracts opinions from podcast transcripts. Return structured data in JSON format."},
+                        {"role": "user", "content": prompt + "\n\nImportant: Return your response as a valid JSON object only, with no other text."}
+                    ],
+                    temperature=0.3
+                )
+                content = response.choices[0].message["content"]
+            
+            # Extract and parse JSON response
+            try:
+                # First try direct JSON parsing
+                try:
+                    opinions_data = json.loads(content)
+                except json.JSONDecodeError:
+                    # If direct parsing fails, try to extract JSON portion
+                    logger.warning("Failed to parse direct JSON, attempting to extract JSON portion")
+                    import re
+                    json_pattern = r'({[\s\S]*})'
+                    match = re.search(json_pattern, content)
+                    if match:
+                        json_str = match.group(1)
+                        opinions_data = json.loads(json_str)
+                    else:
+                        logger.error("Could not extract JSON from LLM response")
+                        return {"opinions": []}
+                
+                return opinions_data
+            except (AttributeError, IndexError) as e:
+                logger.error(f"Error processing OpenAI response: {e}")
+                return {"opinions": []}
+                
+        except Exception as e:
+            logger.error(f"Error calling OpenAI API for opinion extraction: {e}")
+            return {"opinions": []}
 
 
 class DeepSeekProvider(LLMProvider):
@@ -240,48 +326,24 @@ class DeepSeekProvider(LLMProvider):
         Returns:
             Dictionary with identified potential speakers
         """
-        try:
-            # Prepare prompt with episode metadata and transcript sample
-            title = episode_metadata.get("title", "")
-            description = episode_metadata.get("description", "")
+        # Placeholder implementation - to be replaced with actual DeepSeek code
+        logger.warning("DeepSeek provider is not fully implemented yet")
+        return {"hosts": [], "guests": []}
+
+    def extract_opinions_from_transcript(self, prompt: str, episode_metadata: Dict) -> Dict:
+        """
+        Extract opinions from transcript using DeepSeek.
+        
+        Args:
+            prompt: The formatted prompt for opinion extraction
+            episode_metadata: Dictionary with episode metadata for context
             
-            prompt = f"""
-            I need to identify all speakers in a podcast episode based on the following information:
-            
-            TITLE: {title}
-            
-            DESCRIPTION: {description}
-            
-            TRANSCRIPT SAMPLE: {transcript_sample}
-            
-            Known podcast hosts are:
-            1. Chamath Palihapitiya
-            2. Jason Calacanis
-            3. David Sacks
-            4. David Friedberg
-            
-            Please identify which of the known hosts are present in this episode,
-            and any guest speakers that appear in this episode (from title, description, or transcript).
-            
-            Format your response as a JSON object with the following structure:
-            {
-                "hosts": [
-                    {"name": "Full Name", "confidence": 0.9, "mentioned_in": ["title", "description", "transcript"]}
-                ],
-                "guests": [
-                    {"name": "Guest Name", "confidence": 0.8, "mentioned_in": ["title", "description"]}
-                ]
-            }
-            """
-            
-            # TODO: Implement actual DeepSeq API call
-            # For now, return a placeholder response
-            logger.warning("DeepSeq integration not fully implemented yet")
-            return {"hosts": [], "guests": []}
-                
-        except Exception as e:
-            logger.error(f"Error calling DeepSeek API: {e}")
-            return {"hosts": [], "guests": []}
+        Returns:
+            Dictionary with extracted opinions
+        """
+        # Placeholder implementation - to be replaced with actual DeepSeek code
+        logger.warning("DeepSeek provider's opinion extraction is not implemented yet")
+        return {"opinions": []}
 
 
 class LLMService:
@@ -307,32 +369,46 @@ class LLMService:
         else:
             raise ValueError(f"Unsupported LLM provider: {provider}")
     
-    def extract_speakers_from_episode(self, episode: Any, transcript_sample: Optional[str] = None) -> Dict:
+    def extract_speakers_from_episode(self, episode: Any, transcript_sample: str) -> Dict:
         """
-        Extract speakers from an episode using LLM.
+        Extract potential speakers from an episode using its metadata and transcript.
         
         Args:
-            episode: PodcastEpisode instance
-            transcript_sample: Optional transcript sample (if not provided, will try to extract from file)
+            episode: Episode object or dictionary with metadata
+            transcript_sample: Sample from the transcript for context
             
         Returns:
-            Dictionary with identified speakers
+            Dictionary with identified potential speakers
         """
-        # Convert episode to dict for metadata extraction
-        episode_metadata = episode.to_dict() if hasattr(episode, "to_dict") else episode
+        # Convert episode to dictionary if needed
+        episode_metadata = {}
+        if hasattr(episode, 'to_dict'):
+            episode_metadata = episode.to_dict()
+        elif hasattr(episode, '__dict__'):
+            episode_metadata = episode.__dict__
+        else:
+            episode_metadata = {
+                "title": getattr(episode, "title", ""),
+                "description": getattr(episode, "description", ""),
+                "published_at": getattr(episode, "published_at", ""),
+                "tags": getattr(episode, "tags", []),
+                "video_id": getattr(episode, "video_id", "")
+            }
         
-        # Get transcript sample if not provided
-        if not transcript_sample and episode.transcript_filename:
-            try:
-                transcript_sample = self._get_transcript_sample(episode.transcript_filename)
-            except Exception as e:
-                logger.warning(f"Could not extract transcript sample: {e}")
-                transcript_sample = ""
+        return self.provider.extract_speakers(episode_metadata, transcript_sample)
+    
+    def extract_opinions_from_transcript(self, prompt: str, episode_metadata: Dict) -> Dict:
+        """
+        Extract opinions from transcript using LLM.
         
-        # Call provider to extract speakers
-        speakers_data = self.provider.extract_speakers(episode_metadata, transcript_sample or "")
-        
-        return speakers_data
+        Args:
+            prompt: The formatted prompt for opinion extraction
+            episode_metadata: Dictionary with episode metadata for context
+            
+        Returns:
+            Dictionary with extracted opinions
+        """
+        return self.provider.extract_opinions_from_transcript(prompt, episode_metadata)
     
     def _get_transcript_sample(self, transcript_path: str, sample_size: int = 10) -> str:
         """
