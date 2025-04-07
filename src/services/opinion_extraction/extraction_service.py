@@ -38,7 +38,7 @@ class OpinionExtractionService:
     
     def __init__(self, 
                  use_llm: bool = True,
-                 llm_provider: str = "openai",
+                 llm_provider: str = "deepseek",
                  llm_api_key: Optional[str] = None,
                  llm_model: Optional[str] = None,
                  opinions_file_path: str = "data/json/opinions.json",
@@ -51,7 +51,7 @@ class OpinionExtractionService:
         
         Args:
             use_llm: Whether to use LLM for opinion extraction
-            llm_provider: LLM provider ('openai' or other supported providers)
+            llm_provider: LLM provider ('openai' or 'deepseek')
             llm_api_key: API key for the LLM provider
             llm_model: Model name for the LLM provider
             opinions_file_path: Path to store opinions
@@ -69,7 +69,7 @@ class OpinionExtractionService:
                 self.llm_service = LLMService(
                     provider=llm_provider,
                     api_key=llm_api_key,
-                    model=llm_model or "gpt-4o"
+                    model=llm_model or "deepseek-chat"
                 )
                 logger.info(f"LLM integration enabled with provider: {llm_provider}")
             except Exception as e:

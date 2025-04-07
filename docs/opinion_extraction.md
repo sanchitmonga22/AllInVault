@@ -84,6 +84,23 @@ The opinion extraction system has been completely refactored into a set of modul
 - Manages communication between component services
 - Provides a simple, unified API for opinion extraction
 
+## Checkpoint Management System
+
+The opinion extraction pipeline implements a robust checkpoint management system that enables resuming interrupted processing:
+
+### CheckpointManager Class
+- Tracks processed episodes and completed stages
+- Saves progress after each episode to minimize data loss
+- Enables resuming from the last processed episode
+- Allows targeting specific stages of the pipeline
+
+### Checkpointing Features
+- **Episode tracking**: Records each successfully processed episode
+- **Stage completion**: Tracks completion status of each pipeline stage
+- **Timestamp tracking**: Records when each checkpoint was saved
+- **Resumable execution**: Can continue from previous run without duplication
+- **Intermediate data persistence**: Saves outputs from each stage for reuse
+
 ## Key Improvements Over Previous Version
 
 1. **Reduced Context Size**: Each component handles a specific task with focused context
@@ -91,14 +108,16 @@ The opinion extraction system has been completely refactored into a set of modul
 3. **Enhanced Relationship Detection**: More accurate detection with manageable opinion batches
 4. **Complete Speaker Tracking**: Preserves all speaker metadata during merging
 5. **Sophisticated Merging**: More intelligent opinion merging that preserves all appearances
+6. **Resilient Processing**: Added checkpoint system for robust, resumable operation
+7. **LLM Provider Flexibility**: Support for both OpenAI and DeepSeek LLM providers
 
 ## Configuration Options
 
 The Opinion Extraction service can be configured with the following parameters:
 
 - `use_llm` (bool): Whether to use LLM for opinion extraction
-- `llm_provider` (str): LLM provider ('openai' or other supported providers)
-- `llm_model` (str): Model name for the LLM provider (default: "gpt-4o")
+- `llm_provider` (str): LLM provider ('openai' or 'deepseek')
+- `llm_model` (str): Model name for the LLM provider (default: "deepseek-chat")
 - `relation_batch_size` (int): Maximum number of opinions to compare in a single relationship analysis
 - `max_opinions_per_episode` (int): Maximum number of opinions to extract per episode (default: 15)
 - `similarity_threshold` (float): Threshold for opinion similarity to be considered related (default: 0.7)
@@ -113,7 +132,7 @@ from src.services.opinion_extraction.extraction_service import OpinionExtraction
 # Initialize the service
 extractor = OpinionExtractionService(
     use_llm=True,
-    llm_model="gpt-4o",
+    llm_model="deepseek-chat",
     relation_batch_size=20,
     max_opinions_per_episode=15,
     similarity_threshold=0.7
@@ -324,15 +343,45 @@ The system uses a structured data model for opinions:
 - Captures timestamps and reasoning
 - Enables tracking of individual speaker's positions on opinions
 
-## Runtime Script
+## Runtime Scripts
 
-The `run_opinion_extraction_for_first_10.py` script provides a convenient way to run the opinion extraction pipeline on the first 10 chronological episodes:
+### Processing All Episodes Chronologically
+
+The `run_opinion_extraction_for_all_episodes.py` script provides a powerful way to process all episodes with full checkpointing and resumable execution:
+
+```bash
+python run_opinion_extraction_for_all_episodes.py [--count N] [--delay N] [--stage STAGE]
+```
+
+Key features:
+- Processes episodes in chronological order (oldest first)
+- Saves progress after each episode and stage
+- Can be interrupted and resumed without data loss
+- Supports running specific stages of the pipeline
+- Provides detailed logs of the extraction process
+- Handles batching to optimize memory usage
+
+Command-line options:
+- `--count N`: Process only the first N episodes (default: all)
+- `--delay N`: Add a delay of N seconds between episodes (default: 10)
+- `--max-opinions N`: Maximum opinions per episode (default: 15)
+- `--relation-batch-size N`: Batch size for relationship analysis (default: 20)
+- `--llm-model MODEL`: LLM model to use (default: deepseek-chat)
+- `--stage STAGE`: Run only a specific stage (extraction/categorization/relationships/merging/all)
+- `--checkpoint-file PATH`: Path to the checkpoint file (default: data/intermediate/checkpoint.json)
+- `--start-from ID`: Start processing from a specific episode ID
+- `--skip-shorts`: Skip episodes labeled as SHORT
+- `--force-continue`: Continue processing even if errors occur with individual episodes
+
+### Processing Sample Episodes
+
+The `run_opinion_extraction_for_first_10.py` script provides a convenient way to run the opinion extraction pipeline on a sample of episodes:
 
 ```python
 # Initialize the opinion extraction service
 opinion_extraction_service = OpinionExtractionService(
     use_llm=True,
-    llm_model="gpt-4o",
+    llm_model="deepseek-chat",
     opinions_file_path="data/json/opinions.json",
     categories_file_path="data/json/categories.json",
     relation_batch_size=20,
@@ -353,4 +402,5 @@ updated_episodes = opinion_extraction_service.extract_opinions(
 2. **Testability**: Services can be tested independently
 3. **Flexibility**: Components can be replaced or upgraded individually
 4. **Scalability**: Process can be distributed or parallelized by component
-5. **Extensibility**: New capabilities can be added by creating additional services 
+5. **Extensibility**: New capabilities can be added by creating additional services
+6. **Resilience**: Checkpointing allows resumable operation for long-running processes 

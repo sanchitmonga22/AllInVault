@@ -619,3 +619,102 @@ The system uses three main data models:
    - Each stage has independent error handling
    - Failed operations can be retried without affecting others
    - Detailed logging helps identify and fix issues
+
+## LLM Integration
+
+The AllInVault platform utilizes Large Language Models (LLMs) to perform several key functions:
+
+1. **Speaker Identification**: Identifying podcast hosts and guests from transcript data
+2. **Opinion Extraction**: Extracting key opinions expressed in podcast episodes
+3. **Opinion Categorization**: Categorizing opinions into predefined categories
+4. **Relationship Analysis**: Finding relationships and contradictions between opinions
+
+### LLM Provider Architecture
+
+The platform is designed with a modular architecture that supports multiple LLM providers. The current implementation includes:
+
+- **DeepSeek-V3** (Primary Provider)
+- **OpenAI** (Alternative Provider)
+
+```
+┌───────────────────┐
+│                   │
+│   LLMService      │
+│                   │
+└─────────┬─────────┘
+          │
+          ▼
+┌─────────────────────┐
+│    LLMProvider      │
+│    (Abstract)       │
+└─────────────────────┘
+          ▲
+          │
+┌─────────┴─────────┐
+│                   │
+▼                   ▼
+┌───────────────┐   ┌───────────────┐
+│ DeepSeekProvider│  │ OpenAIProvider│
+└───────────────┘   └───────────────┘
+```
+
+### Integration Components
+
+#### LLMService
+
+The main service class that provides a unified interface for all LLM operations. It delegates to the appropriate provider based on configuration.
+
+#### LLMProvider (Abstract Base Class)
+
+Defines the contract for all LLM providers with these abstract methods:
+- `extract_speakers()`: Identifies speakers in podcast episodes
+- `extract_opinions_from_transcript()`: Extracts opinions from transcript text
+
+#### DeepSeekProvider
+
+Implementation of the LLM provider interface that uses DeepSeek-V3. The model is accessed via the "deepseek-chat" model name through the DeepSeek API.
+
+Key features:
+- Compatible with OpenAI format but uses DeepSeek's models
+- Uses DeepSeek-V3 for improved performance
+- Requires DEEP_SEEK_API_KEY environment variable
+
+#### OpenAIProvider
+
+Alternative implementation using OpenAI models, kept for compatibility and comparison.
+
+### Usage by Services
+
+Several services utilize the LLM integration:
+
+- **SpeakerIdentificationService**: Maps anonymous speakers to real names
+- **OpinionExtractionService**: Main orchestrator for opinion analysis
+  - **RawOpinionExtractionService**: Extracts initial opinions
+  - **OpinionCategorizationService**: Categorizes opinions
+  - **OpinionRelationshipService**: Analyzes relationships
+
+### Configuration
+
+LLM settings can be configured:
+- Via environment variables for API keys
+- Via command-line arguments for scripts (e.g., `--llm-model`)
+- Via class constructor parameters for programmatic use
+
+The default configuration now uses:
+- Provider: `deepseek`
+- Model: `deepseek-chat` (DeepSeek-V3)
+
+### Implementation Changes
+
+- Modified `DeepSeekProvider` to use DeepSeek's implementation of the API
+- Updated default provider across all services from OpenAI to DeepSeek
+- Changed default model from "gpt-4o" to "deepseek-chat"
+- Added DeepSeek API URL and client configuration
+- Ensured proper error handling for DeepSeek API responses
+
+### API Format Compatibility
+
+DeepSeek API uses a format compatible with OpenAI. The primary differences are:
+- Base URL: `https://api.deepseek.com`
+- Authentication: Uses the same Bearer token format but with DeepSeek API key
+- Model name: Uses "deepseek-chat" for DeepSeek-V3
