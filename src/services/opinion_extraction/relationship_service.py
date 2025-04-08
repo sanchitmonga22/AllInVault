@@ -12,6 +12,7 @@ from datetime import datetime
 
 from src.services.llm_service import LLMService
 from src.services.opinion_extraction.base_service import BaseOpinionService
+from src.services.opinion_extraction.checkpoint_service import CheckpointService
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -31,7 +32,8 @@ class OpinionRelationshipService(BaseOpinionService):
     def __init__(self, 
                  llm_service: Optional[LLMService] = None,
                  relation_batch_size: int = 20,
-                 similarity_threshold: float = 0.7):
+                 similarity_threshold: float = 0.7,
+                 checkpoint_service: Optional[CheckpointService] = None):
         """
         Initialize the opinion relationship service.
         
@@ -39,10 +41,12 @@ class OpinionRelationshipService(BaseOpinionService):
             llm_service: LLM service for relationship analysis
             relation_batch_size: Maximum number of opinions to analyze in a batch
             similarity_threshold: Threshold for considering opinions similar
+            checkpoint_service: Checkpoint service for saving progress
         """
         super().__init__(llm_service)
         self.relation_batch_size = relation_batch_size
         self.similarity_threshold = similarity_threshold
+        self.checkpoint_service = checkpoint_service
     
     def analyze_relationships(self, categorized_opinions: Dict[str, List[Dict]]) -> List[Dict]:
         """
@@ -82,10 +86,13 @@ class OpinionRelationshipService(BaseOpinionService):
             
         Returns:
             List of relationship data dictionaries
+            
+        Raises:
+            RuntimeError: If LLM service is not available
         """
         if not self.llm_service:
-            # Use basic heuristics if LLM not available
-            return self._analyze_relationships_heuristic(opinions)
+            # Fail explicitly instead of falling back to heuristics
+            raise RuntimeError("LLM service is required for relationship analysis but not available")
         
         try:
             # Prepare opinions for LLM
@@ -103,8 +110,8 @@ class OpinionRelationshipService(BaseOpinionService):
             
         except Exception as e:
             logger.error(f"Error in relationship analysis: {e}")
-            # Fall back to heuristic approach
-            return self._analyze_relationships_heuristic(opinions)
+            # Fail explicitly instead of falling back to heuristics
+            raise RuntimeError(f"Failed to analyze relationships using LLM: {e}")
     
     def _format_opinions_for_relationship_analysis(self, opinions: List[Dict]) -> str:
         """
@@ -119,9 +126,14 @@ class OpinionRelationshipService(BaseOpinionService):
         formatted_text = ""
         
         for i, opinion in enumerate(opinions):
-            # Format basic opinion metadata
+            # Format basic opinion metadata with a fully qualified ID
+            opinion_id = opinion.get('id', str(uuid.uuid4()))
+            episode_id = opinion.get('episode_id', 'unknown')
+            
+            # Create an opinion reference that includes episode info
             formatted_text += f"""
-Opinion ID: {opinion.get('id', str(uuid.uuid4()))}
+Opinion ID: {opinion_id}
+Episode ID: {episode_id}
 Title: {opinion.get('title', '')}
 Description: {opinion.get('description', '')}
 Episode: {opinion.get('episode_title', '')}
@@ -161,9 +173,24 @@ Date: {opinion.get('episode_date', '')}
             
         Returns:
             Dictionary with relationship analysis results
+            
+        Raises:
+            RuntimeError: If LLM service is not available or fails to process the request
         """
         if not self.llm_service:
-            return {}
+            raise RuntimeError("LLM service is required for relationship analysis but not available")
+            
+        # Generate a query ID based on the category and a hash of the formatted opinions
+        import hashlib
+        query_hash = hashlib.md5(formatted_opinions.encode('utf-8')).hexdigest()[:8]
+        query_id = f"relationship_{category}_{query_hash}"
+        
+        # Check if we already have a cached response
+        if self.checkpoint_service and self.checkpoint_service.has_llm_response("relationship_analysis", query_id):
+            cached_response = self.checkpoint_service.get_llm_response("relationship_analysis", query_id)
+            if cached_response and "response" in cached_response:
+                logger.info(f"Using cached LLM response for relationship analysis of category {category}")
+                return cached_response["response"]
             
         system_prompt = """
 You are analyzing a set of opinions from the same category to identify relationships.
@@ -176,12 +203,15 @@ Your task is to analyze each pair of opinions and determine their relationship t
 5. NO_RELATION - These opinions are not related
 
 Output your analysis as a JSON array of relationship objects with these fields:
-- source_id: ID of the first opinion
-- target_id: ID of the second opinion  
+- source_id: ID of the first opinion (use the EXACT Opinion ID from the input)
+- target_id: ID of the second opinion (use the EXACT Opinion ID from the input)
 - relation_type: One of the relationship types above
 - notes: Brief explanation of why this relationship exists (only for significant relationships)
 
 IMPORTANT: 
+- Always use the COMPLETE Opinion ID exactly as provided in the input - DO NOT abbreviate, simplify, or modify the IDs in any way
+- Pay attention to BOTH the Opinion ID and Episode ID in the input to ensure correct identification
+- Opinion IDs are unique identifiers and must be preserved exactly as given
 - For SAME_OPINION, focus on opinions that represent the same core viewpoint, even if phrased differently
 - For EVOLUTION, ensure the opinions are from different dates with the newer one building on the older one
 - For CONTRADICTION, identify when opinions are in direct opposition or represent conflicting viewpoints
@@ -216,16 +246,65 @@ Format your response as a JSON array of relationship objects.
                     
                     # Parse the JSON
                     parsed_response = json.loads(response)
+                    
+                    # Save the response to checkpoint if available
+                    if self.checkpoint_service:
+                        metadata = {
+                            "category": category,
+                            "num_opinions": formatted_opinions.count("Opinion ID:"),
+                            "timestamp": datetime.now().isoformat()
+                        }
+                        self.checkpoint_service.save_llm_response(
+                            stage="relationship_analysis",
+                            query_id=query_id,
+                            response=parsed_response,
+                            metadata=metadata
+                        )
+                    
                     return parsed_response
                 except json.JSONDecodeError:
-                    logger.error(f"Failed to parse LLM response as JSON: {response[:100]}...")
-                    return {}
+                    error_msg = f"Failed to parse LLM response as JSON: {response[:100]}..."
+                    logger.error(error_msg)
+                    raise RuntimeError(error_msg)
             
-            return response if isinstance(response, dict) else {}
+            if isinstance(response, dict):
+                # Save the response to checkpoint if available
+                if self.checkpoint_service:
+                    metadata = {
+                        "category": category,
+                        "num_opinions": formatted_opinions.count("Opinion ID:"),
+                        "timestamp": datetime.now().isoformat()
+                    }
+                    self.checkpoint_service.save_llm_response(
+                        stage="relationship_analysis",
+                        query_id=query_id,
+                        response=response,
+                        metadata=metadata
+                    )
+                return response
+            else:
+                raise RuntimeError(f"Unexpected response type from LLM: {type(response)}")
             
         except Exception as e:
-            logger.error(f"Error calling LLM for relationship analysis: {e}")
-            return {}
+            error_msg = f"Error calling LLM for relationship analysis: {e}"
+            logger.error(error_msg)
+            
+            # Save the error to checkpoint if available
+            if self.checkpoint_service:
+                metadata = {
+                    "category": category,
+                    "num_opinions": formatted_opinions.count("Opinion ID:"),
+                    "timestamp": datetime.now().isoformat(),
+                    "error": str(e)
+                }
+                self.checkpoint_service.save_llm_response(
+                    stage="relationship_analysis",
+                    query_id=query_id,
+                    response={"error": str(e)},
+                    metadata=metadata
+                )
+                
+            raise RuntimeError(error_msg)
     
     def _process_relationship_results(
         self,
@@ -248,83 +327,125 @@ Format your response as a JSON array of relationship objects.
         opinion_map = {op.get('id', ''): op for op in opinions}
         
         # Check if llm_results is a list or needs to be extracted
-        relationship_data = []
+        relationships_data = []
         
-        if isinstance(llm_results, dict) and 'relationships' in llm_results:
-            relationship_data = llm_results.get('relationships', [])
+        if isinstance(llm_results, dict) and "relationships" in llm_results:
+            relationships_data = llm_results.get("relationships", [])
         elif isinstance(llm_results, list):
-            relationship_data = llm_results
+            relationships_data = llm_results
         
-        for relationship in relationship_data:
-            try:
-                # Skip if not a dict
-                if not isinstance(relationship, dict):
-                    continue
-                
-                # Extract relationship data
-                source_id = relationship.get('source_id')
-                target_id = relationship.get('target_id')
-                relation_type = relationship.get('relation_type')
-                notes = relationship.get('notes')
-                
-                # Skip if missing required fields or invalid relationship type
-                if not source_id or not target_id or not relation_type:
-                    continue
-                
-                # Skip if source or target don't exist in our opinions
-                if source_id not in opinion_map or target_id not in opinion_map:
-                    continue
-                
-                # Skip NO_RELATION
-                if relation_type.lower() == RelationshipType.NO_RELATION.lower():
-                    continue
-                
-                # Add validation to ensure relationship type is valid
-                valid_types = [
-                    RelationshipType.SAME_OPINION,
-                    RelationshipType.RELATED,
-                    RelationshipType.EVOLUTION,
-                    RelationshipType.CONTRADICTION
-                ]
-                
-                if relation_type.lower() not in [t.lower() for t in valid_types]:
-                    continue
-                
-                # Standard case for relation type
-                for valid_type in valid_types:
-                    if relation_type.lower() == valid_type.lower():
-                        relation_type = valid_type
-                
-                # Get the source and target opinions
-                source_opinion = opinion_map.get(source_id)
-                target_opinion = opinion_map.get(target_id)
-                
-                # Add chronology verification for EVOLUTION type
-                if relation_type == RelationshipType.EVOLUTION:
-                    source_date = source_opinion.get('episode_date')
-                    target_date = target_opinion.get('episode_date')
-                    
-                    # Ensure target (evolution) is newer than source
-                    if source_date and target_date and source_date > target_date:
-                        # Swap source and target for correct chronology
-                        source_id, target_id = target_id, source_id
-                        notes = f"[Reversed] {notes}" if notes else "[Chronology corrected]"
-                
-                # Create the processed relationship
-                processed_relationship = {
-                    'source_id': source_id,
-                    'target_id': target_id,
-                    'relation_type': relation_type,
-                    'notes': notes
-                }
-                
-                processed_relationships.append(processed_relationship)
-                
-            except Exception as e:
-                logger.error(f"Error processing relationship: {e}")
+        # Process each relationship
+        for rel in relationships_data:
+            if not isinstance(rel, dict):
+                logger.warning(f"Skipping invalid relationship format: {type(rel)}")
                 continue
+                
+            source_id = rel.get("source_id")
+            target_id = rel.get("target_id")
+            relation_type = rel.get("relation_type")
+            notes = rel.get("notes", "")
+            
+            # Skip invalid relationships
+            if not source_id or not target_id or not relation_type:
+                logger.warning(f"Skipping relationship with missing fields: {rel}")
+                continue
+                
+            # Validate IDs are in our opinions list
+            if source_id not in opinion_map:
+                logger.warning(f"Source opinion ID not found: {source_id}")
+                # Try to find it by numeric part if it's a UUID
+                for op_id in opinion_map.keys():
+                    if str(source_id) in str(op_id):
+                        logger.info(f"Found approximate match for {source_id} -> {op_id}")
+                        source_id = op_id
+                        break
+                else:
+                    continue
+                    
+            if target_id not in opinion_map:
+                logger.warning(f"Target opinion ID not found: {target_id}")
+                # Try to find it by numeric part if it's a UUID
+                for op_id in opinion_map.keys():
+                    if str(target_id) in str(op_id):
+                        logger.info(f"Found approximate match for {target_id} -> {op_id}")
+                        target_id = op_id
+                        break
+                else:
+                    continue
+            
+            # Ensure the relation type is valid
+            if not hasattr(RelationshipType, relation_type.upper().replace("-", "_")):
+                logger.warning(f"Invalid relationship type: {relation_type}")
+                relation_type = RelationshipType.RELATED
+            
+            # Get source and target episode information
+            source_episode_id = opinion_map[source_id].get("episode_id", "")
+            source_episode_title = opinion_map[source_id].get("episode_title", "")
+            target_episode_id = opinion_map[target_id].get("episode_id", "")
+            target_episode_title = opinion_map[target_id].get("episode_title", "")
+            
+            # Create composite IDs that include episode information
+            composite_source_id = f"{source_id}_{source_episode_id}"
+            composite_target_id = f"{target_id}_{target_episode_id}"
+            
+            # Create the processed relationship
+            processed_relationship = {
+                "source_id": composite_source_id,
+                "target_id": composite_target_id,
+                "original_source_id": source_id,
+                "original_target_id": target_id,
+                "relation_type": relation_type,
+                "notes": notes,
+                "source_episode_id": source_episode_id,
+                "source_episode_title": source_episode_title,
+                "target_episode_id": target_episode_id,
+                "target_episode_title": target_episode_title,
+                "category": opinion_map[source_id].get("category", "")
+            }
+            
+            processed_relationships.append(processed_relationship)
         
+        logger.info(f"Processed {len(processed_relationships)} relationships from LLM response")
         return processed_relationships
+    
+    def get_relationships_from_data(self, relationship_data: List[Dict]) -> List[Dict]:
+        """
+        Get processed relationships from relationship data.
+        
+        Args:
+            relationship_data: List of relationship dictionaries
+            
+        Returns:
+            List of relationship dictionaries with original IDs for compatibility
+        """
+        relationships = []
+        
+        for rel in relationship_data:
+            if not isinstance(rel, dict):
+                continue
+                
+            # Extract the original opinion IDs if available, otherwise use the composite IDs
+            source_id = rel.get("original_source_id", rel.get("source_id", ""))
+            target_id = rel.get("original_target_id", rel.get("target_id", ""))
+            
+            # If we're using composite IDs, extract just the opinion part
+            if "_" in source_id and "original_source_id" not in rel:
+                source_id = source_id.split("_")[0]
+            if "_" in target_id and "original_target_id" not in rel:
+                target_id = target_id.split("_")[0]
+                
+            relationship = {
+                "source_id": source_id,
+                "target_id": target_id,
+                "relation_type": rel.get("relation_type", RelationshipType.RELATED),
+                "notes": rel.get("notes", ""),
+                "source_episode_id": rel.get("source_episode_id", ""),
+                "target_episode_id": rel.get("target_episode_id", "")
+            }
+            
+            relationships.append(relationship)
+            
+        return relationships
     
     def _analyze_relationships_heuristic(self, opinions: List[Dict]) -> List[Dict]:
         """
@@ -378,12 +499,32 @@ Format your response as a JSON array of relationship objects.
                 if relation_type == RelationshipType.NO_RELATION:
                     continue
                 
+                # Extract source and target information
+                source_id = opinion1.get('id')
+                source_episode_id = opinion1.get('episode_id', '')
+                source_episode_title = opinion1.get('episode_title', '')
+                
+                target_id = opinion2.get('id')
+                target_episode_id = opinion2.get('episode_id', '')
+                target_episode_title = opinion2.get('episode_title', '')
+                
+                # Create composite IDs
+                composite_source_id = f"{source_id}_{source_episode_id}"
+                composite_target_id = f"{target_id}_{target_episode_id}"
+                
                 # Create relationship
                 relationship = {
-                    'source_id': opinion1.get('id'),
-                    'target_id': opinion2.get('id'),
+                    'source_id': composite_source_id,
+                    'target_id': composite_target_id,
+                    'original_source_id': source_id,
+                    'original_target_id': target_id,
                     'relation_type': relation_type,
-                    'notes': notes
+                    'notes': notes,
+                    'source_episode_id': source_episode_id,
+                    'source_episode_title': source_episode_title,
+                    'target_episode_id': target_episode_id,
+                    'target_episode_title': target_episode_title,
+                    'category': opinion1.get('category', '')
                 }
                 
                 relationships.append(relationship)

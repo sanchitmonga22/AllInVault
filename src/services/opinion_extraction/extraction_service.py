@@ -104,13 +104,16 @@ class OpinionExtractionService:
         
         self.categorization_service = OpinionCategorizationService(
             llm_service=self.llm_service,
-            category_repository=self.category_repository
+            category_repository=self.category_repository,
+            min_confidence=0.7,
+            checkpoint_service=self.checkpoint_service
         )
         
         self.relationship_service = OpinionRelationshipService(
             llm_service=self.llm_service,
             relation_batch_size=relation_batch_size,
-            similarity_threshold=similarity_threshold
+            similarity_threshold=similarity_threshold,
+            checkpoint_service=self.checkpoint_service
         )
         
         self.merger_service = OpinionMergerService(
@@ -253,6 +256,13 @@ class OpinionExtractionService:
                         self.checkpoint_service.mark_episode_complete(episode.video_id)
                         # Save raw opinions to checkpoint
                         self.checkpoint_service.save_raw_opinions(all_raw_opinions)
+                        
+                        # Save stage stats for raw extraction
+                        stage_stats = self._generate_stage_stats(
+                            stage="raw_extraction", 
+                            all_raw_opinions=all_raw_opinions
+                        )
+                        self.checkpoint_service.update_extraction_stats({"raw_extraction": stage_stats})
                 
                 updated_episodes.append(episode)
         else:
@@ -284,6 +294,15 @@ class OpinionExtractionService:
             # Ensure all categories exist in the repository
             self.categorization_service.ensure_categories_exist(list(categorized_opinions.keys()))
             
+            # Save stage stats
+            if save_checkpoints:
+                stage_stats = self._generate_stage_stats(
+                    stage="categorization", 
+                    all_raw_opinions=all_raw_opinions,
+                    categorized_opinions=categorized_opinions
+                )
+                self.checkpoint_service.update_extraction_stats({"categorization": stage_stats})
+            
             # Mark categorization stage as complete
             if save_checkpoints:
                 self.checkpoint_service.mark_episode_stage_complete(
@@ -296,6 +315,16 @@ class OpinionExtractionService:
             logger.info("Analyzing relationships between opinions")
             categorized_opinions = self.categorization_service.categorize_opinions(all_raw_opinions)
             relationship_data = self.relationship_service.analyze_relationships(categorized_opinions)
+            
+            # Save stage stats
+            if save_checkpoints:
+                stage_stats = self._generate_stage_stats(
+                    stage="relationship_analysis", 
+                    all_raw_opinions=all_raw_opinions,
+                    categorized_opinions=categorized_opinions,
+                    relationship_data=relationship_data
+                )
+                self.checkpoint_service.update_extraction_stats({"relationship_analysis": stage_stats})
             
             # Mark relationship analysis stage as complete
             if save_checkpoints:
@@ -317,6 +346,17 @@ class OpinionExtractionService:
             # Create structured Opinion objects
             logger.info("Creating final Opinion objects")
             final_opinions = self.merger_service.create_opinion_objects(final_opinions_data)
+            
+            # Save stage stats
+            if save_checkpoints:
+                stage_stats = self._generate_stage_stats(
+                    stage="opinion_merging", 
+                    all_raw_opinions=all_raw_opinions,
+                    categorized_opinions=categorized_opinions,
+                    relationship_data=relationship_data,
+                    final_opinions=final_opinions
+                )
+                self.checkpoint_service.update_extraction_stats({"opinion_merging": stage_stats})
             
             # Mark merging stage as complete
             if save_checkpoints:
@@ -345,6 +385,18 @@ class OpinionExtractionService:
                 relationships=relationships
             )
             
+            # Save stage stats
+            if save_checkpoints:
+                stage_stats = self._generate_stage_stats(
+                    stage="evolution_detection", 
+                    all_raw_opinions=all_raw_opinions,
+                    categorized_opinions=categorized_opinions,
+                    relationship_data=relationship_data,
+                    final_opinions=final_opinions,
+                    evolution_data=evolution_data
+                )
+                self.checkpoint_service.update_extraction_stats({"evolution_detection": stage_stats})
+            
             # Mark evolution detection stage as complete
             if save_checkpoints:
                 self.checkpoint_service.mark_episode_stage_complete(
@@ -367,6 +419,34 @@ class OpinionExtractionService:
             speaker_data = self.speaker_tracking_service.analyze_speaker_behavior(
                 opinions=final_opinions
             )
+            
+            # Get relationships for evolution analysis
+            relationships = self.relationship_service.get_relationships_from_data(relationship_data)
+            
+            # Analyze evolution for complete data
+            evolution_data = self.evolution_service.analyze_opinion_evolution(
+                opinions=final_opinions,
+                relationships=relationships
+            )
+            
+            # Save stage stats
+            if save_checkpoints:
+                stage_stats = self._generate_stage_stats(
+                    stage="speaker_tracking", 
+                    all_raw_opinions=all_raw_opinions,
+                    categorized_opinions=categorized_opinions,
+                    relationship_data=relationship_data,
+                    final_opinions=final_opinions,
+                    evolution_data=evolution_data
+                )
+                # Add speaker-specific stats
+                stage_stats.update({
+                    "total_speakers_tracked": len(speaker_data.get("speaker_journeys", {})),
+                    "speaker_names": list(speaker_data.get("speaker_journeys", {}).keys()),
+                    "total_stance_changes": sum(len(journey.get("stance_changes", [])) 
+                                              for journey in speaker_data.get("speaker_journeys", {}).values())
+                })
+                self.checkpoint_service.update_extraction_stats({"speaker_tracking": stage_stats})
             
             # Mark speaker tracking stage as complete
             if save_checkpoints:
@@ -403,6 +483,25 @@ class OpinionExtractionService:
                 evolution_chains=evolution_data.get('evolution_chains', []),
                 speaker_journeys=evolution_data.get('speaker_journeys', [])
             )
+            
+            # Update extraction stats with detailed metrics
+            detailed_stats = {
+                "total_episodes": len(self.checkpoint_service.get_processed_episodes()),
+                "total_opinions": len(final_opinions),
+                "total_categories": len(categorized_opinions),
+                "total_raw_opinions": len(all_raw_opinions),
+                "total_relationships": len(relationship_data),
+                "total_evolution_chains": len(evolution_data.get('evolution_chains', [])),
+                "total_speaker_journeys": len(evolution_data.get('speaker_journeys', [])),
+                "categories": list(categorized_opinions.keys()),
+                "opinions_per_category": {cat: len(opinions) for cat, opinions in categorized_opinions.items()},
+                "speakers": len(set([speaker['speaker_name'] for opinion in all_raw_opinions for speaker in opinion.get('speakers', [])])),
+                "processed_episodes": self.checkpoint_service.get_processed_episodes(),
+                "last_updated": datetime.now().isoformat()
+            }
+            
+            # Save the detailed stats
+            self.checkpoint_service.update_extraction_stats(detailed_stats)
             
             # Mark the process as complete
             if save_checkpoints:
@@ -549,4 +648,80 @@ class OpinionExtractionService:
         This allows starting the extraction process from scratch.
         """
         self.checkpoint_service.reset_checkpoint()
-        logger.info("Extraction process has been reset, all checkpoints cleared") 
+        logger.info("Extraction process has been reset, all checkpoints cleared")
+    
+    def _generate_stage_stats(self, stage: str, all_raw_opinions: List[Dict], categorized_opinions: Dict = None, relationship_data: List[Dict] = None, final_opinions: List[Opinion] = None, evolution_data: Dict = None) -> Dict[str, Any]:
+        """
+        Generate detailed statistics for a specific processing stage.
+        
+        Args:
+            stage: Current processing stage
+            all_raw_opinions: All raw opinions extracted
+            categorized_opinions: Opinions categorized by category
+            relationship_data: Relationship data between opinions
+            final_opinions: Final processed opinion objects
+            evolution_data: Evolution data for opinions
+            
+        Returns:
+            Dictionary with detailed statistics
+        """
+        stage_stats = {
+            "stage": stage,
+            "total_raw_opinions": len(all_raw_opinions),
+            "processed_episodes": self.checkpoint_service.get_processed_episodes(),
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        # Add stage-specific metrics
+        if stage == "raw_extraction":
+            speaker_counts = {}
+            for opinion in all_raw_opinions:
+                for speaker in opinion.get('speakers', []):
+                    speaker_name = speaker.get('speaker_name', 'Unknown')
+                    if speaker_name not in speaker_counts:
+                        speaker_counts[speaker_name] = 0
+                    speaker_counts[speaker_name] += 1
+            
+            stage_stats.update({
+                "total_speakers": len(speaker_counts),
+                "speaker_opinion_counts": speaker_counts,
+                "episodes_with_opinions": len(set([op.get('episode_id') for op in all_raw_opinions]))
+            })
+        
+        if stage in ["categorization", "relationship_analysis", "opinion_merging"] and categorized_opinions:
+            category_stats = {
+                "total_categories": len(categorized_opinions),
+                "categories": list(categorized_opinions.keys()),
+                "opinions_per_category": {cat: len(opinions) for cat, opinions in categorized_opinions.items()}
+            }
+            stage_stats.update(category_stats)
+        
+        if stage in ["relationship_analysis", "opinion_merging", "evolution_detection"] and relationship_data:
+            # Count relationship types
+            relationship_types = {}
+            for rel in relationship_data:
+                rel_type = rel.get('relation_type')
+                if rel_type not in relationship_types:
+                    relationship_types[rel_type] = 0
+                relationship_types[rel_type] += 1
+            
+            stage_stats.update({
+                "total_relationships": len(relationship_data),
+                "relationship_types": relationship_types
+            })
+        
+        if stage in ["opinion_merging", "evolution_detection", "speaker_tracking", "complete"] and final_opinions:
+            opinion_stats = {
+                "total_final_opinions": len(final_opinions),
+                "opinion_ids": [op.id for op in final_opinions]
+            }
+            stage_stats.update(opinion_stats)
+        
+        if stage in ["evolution_detection", "speaker_tracking", "complete"] and evolution_data:
+            evolution_stats = {
+                "total_evolution_chains": len(evolution_data.get('evolution_chains', [])),
+                "total_speaker_journeys": len(evolution_data.get('speaker_journeys', [])),
+            }
+            stage_stats.update(evolution_stats)
+        
+        return stage_stats 

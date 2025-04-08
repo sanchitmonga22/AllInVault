@@ -252,18 +252,217 @@ class CheckpointService:
         
         return []
     
+    def save_llm_response(
+        self,
+        stage: str,
+        query_id: str,
+        response: Any,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """
+        Save an LLM response to a checkpoint file.
+        
+        Args:
+            stage: Stage name (e.g., "extraction", "relation")
+            query_id: Unique ID for this query
+            response: LLM response (usually a dictionary)
+            metadata: Optional metadata about the query
+        """
+        # Create directory if it doesn't exist
+        llm_responses_dir = os.path.join(os.path.dirname(self.checkpoint_path), "llm_responses", stage)
+        os.makedirs(llm_responses_dir, exist_ok=True)
+        
+        # Add timestamp to metadata
+        if metadata is None:
+            metadata = {}
+        
+        if "timestamp" not in metadata:
+            metadata["timestamp"] = datetime.now().isoformat()
+            
+        # Prepare data to save
+        data = {
+            "query_id": query_id,
+            "stage": stage,
+            "timestamp": datetime.now().isoformat(),
+            "response": response,
+            "metadata": metadata
+        }
+        
+        # For relationship analysis, add a note about ID format to help with debugging
+        if stage == "relationship_analysis" and isinstance(response, dict) and "relationships" in response:
+            # Add a format description to metadata
+            data["id_format_description"] = (
+                "Relationship IDs in this file may be in composite format (opinion_id_episode_id). "
+                "When using these IDs, be sure to extract the correct components based on your use case."
+            )
+            
+            # Check each relationship and ensure consistent format
+            for rel in response["relationships"]:
+                if isinstance(rel, dict) and "source_id" in rel and "target_id" in rel:
+                    # If the IDs don't already contain episode information, add a note
+                    if "_" not in rel["source_id"] and "_" not in rel["target_id"]:
+                        rel["id_format_note"] = (
+                            "IDs in this relationship are simple IDs without episode information. "
+                            "Refer to source_episode_id and target_episode_id fields for complete context."
+                        )
+        
+        # Create a unique filename with timestamp and query ID
+        filename = f"{query_id}.json"
+        filepath = os.path.join(llm_responses_dir, filename)
+        
+        # Save the data
+        with open(filepath, 'w') as file:
+            json.dump(data, file, indent=2)
+    
+    def get_llm_response(self, stage: str, query_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Retrieve a saved LLM response.
+        
+        Args:
+            stage: Processing stage name
+            query_id: Unique identifier for the query
+            
+        Returns:
+            Response data dictionary or None if not found
+        """
+        # Construct the path to the response file
+        llm_responses_dir = os.path.join(os.path.dirname(self.checkpoint_path), "llm_responses")
+        filename = os.path.join(llm_responses_dir, stage, f"{query_id}.json")
+        
+        if not os.path.exists(filename):
+            logger.debug(f"LLM response not found: {stage}/{query_id}")
+            return None
+        
+        try:
+            with open(filename, 'r') as f:
+                data = json.load(f)
+            
+            logger.info(f"Loaded LLM response for {stage}/{query_id}")
+            return data
+        except Exception as e:
+            logger.error(f"Failed to load LLM response for {stage}/{query_id}: {e}")
+            return None
+    
+    def has_llm_response(self, stage: str, query_id: str) -> bool:
+        """
+        Check if an LLM response exists for a given stage and query.
+        
+        Args:
+            stage: Processing stage name
+            query_id: Unique identifier for the query
+            
+        Returns:
+            True if a response exists, False otherwise
+        """
+        llm_responses_dir = os.path.join(os.path.dirname(self.checkpoint_path), "llm_responses")
+        filename = os.path.join(llm_responses_dir, stage, f"{query_id}.json")
+        return os.path.exists(filename)
+    
+    def list_llm_responses(self, stage: Optional[str] = None) -> List[str]:
+        """
+        List all saved LLM response IDs, optionally filtered by stage.
+        
+        Args:
+            stage: Optional stage to filter by
+            
+        Returns:
+            List of query IDs
+        """
+        llm_responses_dir = os.path.join(os.path.dirname(self.checkpoint_path), "llm_responses")
+        
+        if not os.path.exists(llm_responses_dir):
+            return []
+        
+        if stage:
+            stage_dir = os.path.join(llm_responses_dir, stage)
+            if not os.path.exists(stage_dir):
+                return []
+            
+            # Get query IDs from filenames
+            return [os.path.splitext(filename)[0] for filename in os.listdir(stage_dir)
+                   if filename.endswith('.json')]
+        
+        # Get all query IDs across all stages
+        result = []
+        for stage_name in os.listdir(llm_responses_dir):
+            stage_dir = os.path.join(llm_responses_dir, stage_name)
+            if os.path.isdir(stage_dir):
+                for filename in os.listdir(stage_dir):
+                    if filename.endswith('.json'):
+                        result.append(f"{stage_name}/{os.path.splitext(filename)[0]}")
+        
+        return result
+    
+    def get_stage_progress(self, stage: str) -> Dict[str, Any]:
+        """
+        Get detailed progress information for a specific stage.
+        
+        Args:
+            stage: Processing stage name
+            
+        Returns:
+            Dictionary with progress information
+        """
+        # Get all LLM responses for this stage
+        responses = self.list_llm_responses(stage)
+        
+        # Check overall stage completion status
+        all_episodes = self.checkpoint_data.get("processed_episodes", [])
+        completed_count = 0
+        
+        for episode_id in all_episodes:
+            stages_data = self.checkpoint_data.get("completed_stages", {}).get(episode_id, {})
+            completed_stages = stages_data.get("stages", [])
+            if stage in completed_stages:
+                completed_count += 1
+        
+        # Calculate progress statistics
+        return {
+            "stage": stage,
+            "total_llm_queries": len(responses),
+            "completed_episodes": completed_count,
+            "total_episodes": len(all_episodes),
+            "completion_percentage": (completed_count / max(1, len(all_episodes))) * 100
+        }
+
     def get_extraction_stats(self) -> Dict[str, Any]:
         """
-        Get statistics about the extraction process.
+        Get opinion extraction statistics.
         
         Returns:
-            Dictionary of statistics
+            Dictionary with extraction statistics
         """
-        return self.checkpoint_data.get("extraction_stats", {})
+        stats = self.checkpoint_data.get("extraction_stats", {})
+        
+        # Add stage progress information to the stats
+        stats["stage_progress"] = {
+            stage: self.get_stage_progress(stage)
+            for stage in self.STAGES
+        }
+        
+        return stats
+        
+    def update_extraction_stats(self, new_stats: Dict[str, Any]) -> None:
+        """
+        Update extraction statistics.
+        
+        Args:
+            new_stats: Dictionary with new statistics to merge
+        """
+        current_stats = self.checkpoint_data.get("extraction_stats", {})
+        
+        for key, value in new_stats.items():
+            if isinstance(value, dict) and key in current_stats and isinstance(current_stats[key], dict):
+                current_stats[key].update(value)
+            else:
+                current_stats[key] = value
+        
+        self.checkpoint_data["extraction_stats"] = current_stats
+        self.save_checkpoint()
     
     def reset_checkpoint(self) -> None:
         """
-        Reset the checkpoint data to start extraction from scratch.
+        Reset checkpoint data to a clean state.
         """
         self.checkpoint_data = {
             "processed_episodes": [],
@@ -279,9 +478,8 @@ class CheckpointService:
             },
             "last_updated": datetime.now().isoformat()
         }
-        
         self.save_checkpoint()
-        logger.info("Reset checkpoint data")
+        logger.info("Checkpoint data reset to clean state")
     
     def get_extraction_progress(self) -> Dict[str, Any]:
         """
