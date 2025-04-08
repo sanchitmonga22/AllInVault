@@ -238,7 +238,9 @@ def main():
     stage_group.add_argument(
         "--stages", 
         type=str,
-        help="Comma-separated list of stages to execute (options: fetch_metadata, analyze_episodes, download_audio, convert_audio, transcribe_audio, identify_speakers)"
+        help=('Comma-separated list of stages to execute. Available stages: '
+              'FETCH_METADATA, ANALYZE_EPISODES, DOWNLOAD_AUDIO, CONVERT_AUDIO, '
+              'TRANSCRIBE_AUDIO, IDENTIFY_SPEAKERS, EXTRACT_OPINIONS')
     )
     
     stage_group.add_argument(
@@ -381,6 +383,52 @@ def main():
         "--force-reidentify", 
         action="store_true",
         help="Force re-identification of speakers even if already identified"
+    )
+    
+    # Opinion extraction stage parameters
+    opinion_group = pipeline_parser.add_argument_group("Extract Opinions Stage")
+    opinion_group.add_argument(
+        "--max-opinions-per-episode", 
+        type=int, 
+        default=15,
+        help="Maximum number of opinions to extract per episode (default: 15)"
+    )
+    
+    opinion_group.add_argument(
+        "--max-context-opinions", 
+        type=int, 
+        default=20,
+        help="Maximum number of context opinions to include (default: 20)"
+    )
+    
+    opinion_group.add_argument(
+        "--checkpoint-path", 
+        type=str,
+        help="Path to store checkpoint data (default: data/checkpoints/extraction_checkpoint.json)"
+    )
+    
+    opinion_group.add_argument(
+        "--raw-opinions-path", 
+        type=str,
+        help="Path to store raw opinions data (default: data/checkpoints/raw_opinions.json)"
+    )
+    
+    opinion_group.add_argument(
+        "--no-resume", 
+        action="store_true",
+        help="Don't resume from previous checkpoint, start fresh"
+    )
+    
+    opinion_group.add_argument(
+        "--no-checkpoints", 
+        action="store_true",
+        help="Don't save checkpoints during extraction"
+    )
+    
+    opinion_group.add_argument(
+        "--reset-checkpoint", 
+        action="store_true",
+        help="Reset checkpoint data before starting extraction"
     )
     
     # Display command
@@ -567,6 +615,22 @@ def build_stage_kwargs(args):
     kwargs['force_reidentify'] = args.force_reidentify
     if args.transcripts_dir:
         kwargs['transcripts_dir'] = args.transcripts_dir
+    
+    # Extract opinions stage
+    if hasattr(args, 'max_opinions_per_episode'):
+        kwargs['max_opinions_per_episode'] = args.max_opinions_per_episode
+    if hasattr(args, 'max_context_opinions'):
+        kwargs['max_context_opinions'] = args.max_context_opinions
+    if hasattr(args, 'checkpoint_path'):
+        kwargs['checkpoint_path'] = args.checkpoint_path
+    if hasattr(args, 'raw_opinions_path'):
+        kwargs['raw_opinions_path'] = args.raw_opinions_path
+    if hasattr(args, 'no_resume'):
+        kwargs['resume_from_checkpoint'] = not args.no_resume
+    if hasattr(args, 'no_checkpoints'):
+        kwargs['save_checkpoints'] = not args.no_checkpoints
+    if hasattr(args, 'reset_checkpoint'):
+        kwargs['reset_checkpoint'] = args.reset_checkpoint
     
     return kwargs
 

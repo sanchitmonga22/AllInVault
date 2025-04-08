@@ -254,6 +254,7 @@ dmypy.json
 data/audio/
 data/json/
 data/transcripts/
+data/intermediate/
 *.mp3
 *.m4a
 *.wav
@@ -277,5 +278,4 @@ Desktop.ini
 .cursorrules
 
 /data/webm
-
 /data/embedding_chunks
