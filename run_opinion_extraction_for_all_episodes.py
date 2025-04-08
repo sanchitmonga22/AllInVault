@@ -14,6 +14,7 @@ Features:
 - Resumable: Can pick up where it left off if interrupted
 - Checkpointing: Maintains a progress file to track completed episodes
 - Flexible: Allows processing specific stages or episodes
+- Parallel processing: Extracts raw opinions from multiple episodes in parallel
 
 Usage:
   python run_opinion_extraction_for_all_episodes.py [--count N] [--delay N]
@@ -34,6 +35,9 @@ Options:
   --skip-merging             Skip the opinion merging stage
   --skip-shorts              Skip episodes labeled as SHORT
   --checkpoint-file          Path to the checkpoint file to track progress (default: data/intermediate/checkpoint.json)
+  --workers N                Number of parallel workers for extraction (default: 4)
+  --batch-size N             Batch size for parallel processing (default: 10)
+  --timeout N                Timeout in seconds for each extraction job (default: 600)
 """
 
 import logging
@@ -42,7 +46,8 @@ import time
 import argparse
 import json
 import os
-from typing import List, Dict, Any, Optional
+import concurrent.futures
+from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
 from pathlib import Path
 
@@ -83,6 +88,14 @@ def parse_args():
                         help="Path to log file (if not specified, logs will only go to console)")
     parser.add_argument("--dry-run", action="store_true", default=False,
                         help="Dry run - don't actually process episodes, just show what would be done")
+    
+    # Add parallel processing arguments
+    parser.add_argument("--workers", type=int, default=4,
+                        help="Number of parallel workers for extraction (default: 4)")
+    parser.add_argument("--batch-size", type=int, default=10,
+                        help="Batch size for parallel processing (default: 10)")
+    parser.add_argument("--timeout", type=int, default=600,
+                        help="Timeout in seconds for each extraction job (default: 600)")
     
     # Add stage-specific arguments
     parser.add_argument("--stage", type=str, choices=["extraction", "categorization", "relationships", "merging", "all"],
@@ -486,6 +499,53 @@ def process_batch_of_raw_opinions(raw_opinions, categorization_service, raw_opin
     
     return combined_raw_opinions
 
+def extract_opinions_from_episode(args_tuple: Tuple) -> Dict:
+    """
+    Extract raw opinions from a single episode.
+    
+    Args:
+        args_tuple: Tuple containing (episode, transcript_path, extraction_service, episode_index, total_episodes)
+        
+    Returns:
+        Dictionary with episode_id, opinions, and status information
+    """
+    episode, transcript_path, extraction_service, episode_index, total_episodes = args_tuple
+    
+    result = {
+        "episode_id": episode.video_id,
+        "episode_title": episode.title,
+        "status": "failed",
+        "opinions": None,
+        "error": None
+    }
+    
+    try:
+        logging.info(f"Extracting raw opinions from episode ({episode_index}/{total_episodes}): {episode.title}")
+        
+        # Extract raw opinions from this episode
+        raw_opinions = extraction_service.extract_raw_opinions(
+            episode=episode,
+            transcript_path=transcript_path
+        )
+        
+        if raw_opinions:
+            logging.info(f"Extracted {len(raw_opinions)} raw opinions from {episode.title}")
+            
+            # Convert any datetime objects to ISO format strings for JSON serialization
+            raw_opinions = convert_datetime_to_iso(raw_opinions)
+            
+            result["status"] = "success"
+            result["opinions"] = raw_opinions
+        else:
+            logging.warning(f"No opinions extracted from episode: {episode.title}")
+            result["status"] = "empty"
+    except Exception as e:
+        logging.error(f"Error processing episode {episode.title}: {e}", exc_info=True)
+        result["status"] = "error"
+        result["error"] = str(e)
+    
+    return result
+
 def main():
     """Run opinion extraction for all episodes chronologically."""
     start_time = time.time()
@@ -620,14 +680,13 @@ def main():
                     logger.info(f"[DRY RUN] Would process episode: {episode.title}")
             else:
                 # Initialize or load raw opinions from file
-                batch_size = 5  # Process and save in batches to minimize potential data loss
                 batch_raw_opinions = []
                 
-                # Process each episode to extract raw opinions
-                for i, episode in enumerate(episodes_with_transcripts):
+                # Filter episodes that need processing
+                episodes_to_process = []
+                for episode in episodes_with_transcripts:
                     # Skip episodes without transcripts
                     if not episode.transcript_filename:
-                        logger.warning(f"Episode {episode.title} has no transcript")
                         continue
                     
                     # Skip already processed episodes if requested
@@ -646,79 +705,76 @@ def main():
                         logger.warning(f"Transcript file {transcript_path} not found")
                         continue
                     
-                    try:
-                        logger.info(f"Extracting raw opinions from episode ({i+1}/{len(episodes_with_transcripts)}): {episode.title}")
-                        
-                        # Extract raw opinions from this episode
-                        raw_opinions = raw_extraction_service.extract_raw_opinions(
-                            episode=episode,
-                            transcript_path=transcript_path
-                        )
-                        
-                        if raw_opinions:
-                            logger.info(f"Extracted {len(raw_opinions)} raw opinions from {episode.title}")
-                            
-                            # Convert any datetime objects to ISO format strings for JSON serialization
-                            raw_opinions = convert_datetime_to_iso(raw_opinions)
-                            
-                            batch_raw_opinions.extend(raw_opinions)
-                            
-                            # Update the episode metadata
-                            if "opinions" not in episode.metadata:
-                                episode.metadata["opinions"] = {}
-                            
-                            # Add opinion IDs to episode metadata
-                            for opinion in raw_opinions:
-                                episode.metadata["opinions"][opinion["id"]] = {
-                                    "title": opinion["title"],
-                                    "category": opinion["category"]
-                                }
-                            
-                            # Save the updated episode metadata
-                            episode_repo.save_episode(episode)
-                            
-                            # Mark episode as processed in checkpoint
-                            checkpoint_manager.mark_episode_processed(episode.video_id)
-                        else:
-                            logger.warning(f"No opinions extracted from episode: {episode.title}")
-                            # Still mark as processed to avoid retrying
-                            checkpoint_manager.mark_episode_processed(episode.video_id)
-                        
-                        # Process and save batch if we've reached the batch size
-                        if len(batch_raw_opinions) >= batch_size:
-                            logger.info(f"Processing batch of {len(batch_raw_opinions)} raw opinions")
-                            all_raw_opinions = process_batch_of_raw_opinions(
-                                batch_raw_opinions, 
-                                categorization_service, 
-                                args.raw_opinions_file,
-                                logger
-                            )
-                            batch_raw_opinions = []
-                    except Exception as e:
-                        logger.error(f"Error processing episode {episode.title}: {e}", exc_info=True)
-                        if not args.force_continue:
-                            raise
-                        else:
-                            logger.warning("Continuing to next episode due to --force-continue flag")
-                    
-                    # Add delay between episodes if specified
-                    if i < len(episodes_with_transcripts) - 1 and args.delay > 0:
-                        logger.info(f"Waiting {args.delay} seconds before next episode...")
-                        time.sleep(args.delay)
+                    episodes_to_process.append((episode, transcript_path))
                 
-                # Process any remaining batch
-                if batch_raw_opinions:
-                    logger.info(f"Processing final batch of {len(batch_raw_opinions)} raw opinions")
+                logger.info(f"Processing {len(episodes_to_process)} episodes in parallel with {args.workers} workers")
+                
+                # Process episodes in batches to manage memory
+                for batch_start in range(0, len(episodes_to_process), args.batch_size):
+                    batch_end = min(batch_start + args.batch_size, len(episodes_to_process))
+                    batch = episodes_to_process[batch_start:batch_end]
+                    
+                    logger.info(f"Processing batch {batch_start//args.batch_size + 1} with {len(batch)} episodes")
+                    
+                    # Prepare arguments for parallel processing
+                    extraction_args = [
+                        (episode, transcript_path, raw_extraction_service, i+1, len(episodes_to_process))
+                        for i, (episode, transcript_path) in enumerate(batch)
+                    ]
+                    
+                    # Process batch in parallel
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as executor:
+                        future_to_episode = {
+                            executor.submit(extract_opinions_from_episode, arg): arg[0] 
+                            for arg in extraction_args
+                        }
+                        
+                        # Process results as they complete
+                        for future in concurrent.futures.as_completed(future_to_episode, timeout=args.timeout):
+                            episode = future_to_episode[future]
+                            try:
+                                result = future.result()
+                                
+                                if result["status"] == "success":
+                                    # Add opinions to batch
+                                    batch_raw_opinions.extend(result["opinions"])
+                                    
+                                    # Update episode metadata
+                                    if "opinions" not in episode.metadata:
+                                        episode.metadata["opinions"] = {}
+                                    
+                                    # Add opinion IDs to episode metadata
+                                    for opinion in result["opinions"]:
+                                        episode.metadata["opinions"][opinion["id"]] = {
+                                            "title": opinion["title"],
+                                            "category": opinion["category"]
+                                        }
+                                    
+                                    # Save the updated episode metadata
+                                    episode_repo.save_episode(episode)
+                                
+                                # Mark episode as processed in checkpoint (regardless of outcome)
+                                checkpoint_manager.mark_episode_processed(episode.video_id)
+                                
+                            except Exception as e:
+                                logger.error(f"Exception in parallel processing for {episode.title}: {e}", exc_info=True)
+                                if not args.force_continue:
+                                    raise
+                    
+                    # Process and save the current batch
+                    logger.info(f"Processing batch of {len(batch_raw_opinions)} raw opinions")
                     all_raw_opinions = process_batch_of_raw_opinions(
                         batch_raw_opinions, 
                         categorization_service, 
                         args.raw_opinions_file,
                         logger
                     )
-                else:
-                    # Load all raw opinions if needed
-                    with open(args.raw_opinions_file, 'r') as f:
-                        all_raw_opinions = json.load(f)
+                    batch_raw_opinions = []
+                    
+                    # Add delay between batches if specified
+                    if batch_end < len(episodes_to_process) and args.delay > 0:
+                        logger.info(f"Waiting {args.delay} seconds before next batch...")
+                        time.sleep(args.delay)
                 
                 # Mark extraction stage as completed
                 checkpoint_manager.mark_stage_completed("extraction")

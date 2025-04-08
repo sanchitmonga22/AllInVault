@@ -25,6 +25,7 @@ AllInVault is a platform for processing, analyzing, and extracting insights from
 - **Pipeline Orchestrator**: Manages the execution of the multi-stage pipeline
 - **LLM Service**: Provides integration with language models for enhanced analysis
 - **Opinion Extractor Service**: Extracts opinions from podcast transcripts using LLM
+- **Checkpoint Service**: Manages extraction progress and enables resumable operations
 
 ### 4. CLI Layer
 
@@ -94,532 +95,6 @@ The pipeline is designed with a stage-based architecture, where each stage has a
 6. **IDENTIFY_SPEAKERS**: Maps speakers in the transcripts to actual identities.
 7. **EXTRACT_OPINIONS**: Uses LLM to extract opinions from the transcripts.
 
-## Opinion Extraction and Evolution Tracking
-
-The opinion extraction system has been enhanced to better track and analyze how opinions evolve over time:
-
-```
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│                 │     │                 │     │                 │     │                 │
-│  PodcastEpisode │────▶│ OpinionExtractor│────▶│     Opinion     │────▶│ OpinionEvolution│
-│                 │     │                 │     │                 │     │                 │
-└─────────────────┘     └────────┬────────┘     └───────┬─────────┘     └─────────────────┘
-                                 │                      │
-                                 │                      │
-                         ┌───────▼───────┐      ┌───────▼───────┐
-                         │               │      │               │
-                         │   LLM Service │      │ CategorySystem│
-                         │               │      │               │
-                         └───────────────┘      └───────────────┘
-```
-
-### Enhanced Speaker Identification
-
-The system now implements robust speaker identification:
-
-1. **Proper Name Resolution**: Maps speaker IDs to full names using episode metadata
-2. **Role Identification**: Identifies speakers as hosts, guests, or unknown participants
-3. **Consistent Tracking**: Ensures the same speaker's opinions are properly connected across episodes
-4. **Metadata Enrichment**: Includes all available speaker information for better context
-5. **Multi-Speaker Support**: Properly handles opinions shared by multiple speakers
-
-### Enhanced Opinion Model
-
-The Opinion model has been improved with:
-
-1. **Categorization**: Opinions now link to a Category entity with unique IDs, allowing for structured categorization
-2. **Evolution Tracking**: New fields track how opinions evolve across episodes:
-   - `related_opinions`: Connects to other opinions on the same topic
-   - `evolution_notes`: Contains details on how opinions change
-   - `original_opinion_id`: References the first opinion in an evolution chain
-   - `evolution_chain`: Tracks the chronological development of an opinion
-3. **Multi-Speaker Opinions**: Support for opinions shared by multiple speakers:
-   - Tracks all speaker IDs associated with a shared opinion
-   - Displays combined speaker names for shared opinions
-   - Provides helper methods for working with multi-speaker opinions
-   - Includes metadata to identify and analyze shared opinions
-
-### Intelligent Context Management
-
-The system now optimizes the context sent to the LLM by:
-
-1. **Relevance Filtering**: Only sending the most relevant previous opinions based on:
-   - Same speaker
-   - Same category
-   - Recent opinions
-   
-2. **Context Limitation**: Capping the number of context opinions to avoid overwhelming the LLM
-
-3. **Structured Formatting**: Organizing opinions by category for clearer context
-
-### Opinion Evolution Analysis
-
-The system analyzes how opinions evolve through several mechanisms:
-
-1. **Contradiction Detection**: Identifies when speakers change their stance
-2. **Refinement Tracking**: Captures when opinions are clarified or expanded
-3. **Cross-Speaker Relations**: Links related opinions across different speakers
-4. **Chain Building**: Constructs chronological chains of evolving opinions
-5. **Consensus Tracking**: Identifies when multiple speakers share the same opinion
-6. **Agreement/Disagreement**: Captures when speakers agree or disagree on the same topic
-
-## Dynamic Category Management
-
-The category system has been enhanced to support flexible classification:
-
-1. **Predefined Categories**: The system comes with default categories for common topics
-2. **Dynamic Creation**: New categories can be created when the LLM identifies new topics
-3. **LLM Suggestions**: The LLM can suggest new categories when opinions don't fit existing ones
-4. **ID-Based Reference**: Opinions reference categories by ID rather than string names
-5. **Hierarchical Support**: Categories can have parent-child relationships
-6. **Category Migration**: Legacy opinions are automatically migrated to the new category system
-
-## Opinion Processing Workflow
-
-The system processes opinions in a chronological workflow:
-
-1. **Sequential Processing**: Episodes are processed in date order
-2. **Context Building**: Each episode builds on the context from previous episodes
-3. **Rate Limit Management**: Processing includes delays to handle API rate limits
-4. **Existing Opinion Detection**: Avoids reprocessing episodes that already have opinions
-5. **Statistical Analysis**: Provides opinion distribution statistics after each episode
-
-## Opinion Retrieval Capabilities
-
-The enhanced system supports retrieving opinions by:
-
-1. **Category**: Find all opinions in a specific category
-2. **Speaker**: Find all opinions expressed by a specific speaker
-3. **Episode**: Find all opinions from a specific episode
-4. **Evolution Chain**: Trace the evolution of an opinion over time
-5. **Related Opinions**: Find all opinions related to a specific opinion
-6. **Shared Opinions**: Find opinions shared by multiple speakers
-7. **Agreement/Disagreement**: Find patterns of agreement or disagreement between speakers
-
-## Data Flow
-
-```
-YouTube API ─────► Metadata ─────► Audio Files ─────► Transcripts ─────► Speaker Identification ─────► Opinion Extraction
-     │               │                │                   │                        │                         │
-     │               │                │                   │                        │                         │
-     ▼               ▼                ▼                   ▼                        ▼                         ▼
-episodes.json     metadata      audio files         transcript files        speaker metadata           opinions.json
-```
-
-## Key Design Principles
-
-1. **Modularity**: Each component handles a specific responsibility
-2. **Pipeline Structure**: Clear dependencies between stages
-3. **Flexibility**: Support for different LLM providers
-4. **Error Handling**: Robust handling of API rate limits and failures
-5. **Data Persistence**: JSON-based storage for episodes and opinions
-6. **Evolution Tracking**: Comprehensive tracking of opinion changes over time
-
-## Benefits of This Architecture
-
-1. **Scalability**: Pipeline stages can be executed independently or in sequence.
-2. **Flexibility**: Each component can be replaced or extended without affecting others.
-3. **Maintainability**: Clear separation of concerns makes the codebase easier to maintain.
-4. **Extensibility**: New features can be added by creating new pipeline stages.
-5. **Robustness**: Each stage can handle errors independently, preventing pipeline failure.
-
-## Future Architecture Enhancements
-
-1. Database integration for more efficient data storage and retrieval
-2. Advanced opinion evolution visualization tools
-3. Support for additional LLM providers
-4. API layer for web/mobile application integration
-5. Semantic search for finding related opinions across different wording
-
-## AllInVault Architecture Overview
-
-## System Architecture
-
-AllInVault is designed to extract, process, and track opinions from podcast transcripts using a modular, extensible architecture following SOLID principles.
-
-### Core Components
-
-```
-┌─────────────────────┐     ┌─────────────────────┐     ┌─────────────────────┐
-│  PipelineOrchestrator│────▶│OpinionExtractorService│───▶│   LLM Service      │
-└─────────────────────┘     └─────────────────────┘     └─────────────────────┘
-          │                          │                            │
-          │                          │                            │
-          ▼                          ▼                            ▼
-┌─────────────────────┐     ┌─────────────────────┐     ┌─────────────────────┐
-│  Episode Repository  │     │  Opinion Repository │     │ Category Repository │
-└─────────────────────┘     └─────────────────────┘     └─────────────────────┘
-          │                          │                            │
-          │                          │                            │
-          ▼                          ▼                            ▼
-┌─────────────────────┐     ┌─────────────────────┐     ┌─────────────────────┐
-│   Podcast Episode   │     │       Opinion       │     │      Category       │
-└─────────────────────┘     └─────────────────────┘     └─────────────────────┘
-```
-
-## Opinion Extraction Pipeline
-
-The opinion extraction process flows through several key components:
-
-1. **PipelineOrchestrator**: Coordinates the extraction process across multiple episodes
-2. **OpinionExtractorService**: Processes transcript files and extracts opinions
-3. **LLMService**: Interfaces with language models (like OpenAI) to analyze transcripts
-4. **Repositories**: Store and manage podcast episodes, opinions, and categories
-
-## Recent Enhancement: Multi-format Transcript Support
-
-### Changes Made
-
-We've enhanced the system to support both JSON and TXT transcript formats:
-
-1. **OpinionExtractorService Modifications**:
-   - Added `_load_txt_transcript()` method to parse TXT transcript files
-   - Updated `load_transcript()` to detect file format and choose appropriate loading method
-   - Refactored `_format_transcript_for_llm()` to handle both format structures
-
-2. **Script Updates**:
-   - Added `--transcript-format` command-line argument to specify preferred format
-   - Created `update_transcript_filenames()` function to match episodes with appropriate transcript files
-   - Enhanced logging to show transcript format information
-
-### TXT Format Handling
-
-The TXT transcript files follow this format:
-```
-# Episode Title
-Video ID: [VIDEO_ID]
-Published: [DATE]
-
-================================================================================
-
-[TIMESTAMP] Speaker N: [TEXT]
-[TIMESTAMP] Speaker N: [TEXT]
-...
-```
-
-The system parses this format and converts it to a standardized internal structure compatible with the existing JSON format processing.
-
-## Data Flow
-
-1. User runs the script with desired options, including transcript format preference
-2. System loads episodes and matches them with transcript files
-3. For each transcript:
-   - The file is loaded based on its format (.json or .txt)
-   - Content is converted to a standardized structure
-   - The transcript is formatted for LLM processing
-   - The LLM extracts opinions
-   - Opinions are processed and stored
-
-## Benefits of the New Architecture
-
-1. **Format Flexibility**: The system can now work with multiple transcript formats
-2. **Fault Tolerance**: Falls back to available format if preferred format isn't available
-3. **Maintainability**: Clean separation of concerns with dedicated methods for format handling
-4. **Extensibility**: Easy to add support for additional formats in the future
-
-## Future Enhancements
-
-Potential future improvements include:
-
-1. Support for additional transcript formats (SRT, VTT, etc.)
-2. Streaming transcript processing for very large files
-3. Parallel processing of multiple episodes
-4. Advanced caching of intermediate results
-
-# Opinion Evolution Tracking Architecture
-
-## Overview
-
-This document outlines the architecture for tracking opinion evolution across podcast episodes. The system is designed to track how speakers' opinions on specific topics evolve over time, identify contradictions, and analyze relationships between opinions.
-
-## Data Models
-
-### Opinion
-
-The core model representing a unique opinion that can appear in multiple episodes:
-
-```
-Opinion
-├── id: Unique identifier
-├── title: Short summary 
-├── description: Detailed description
-├── category_id: Category classification
-├── related_opinions: List of related opinion IDs
-├── evolution_notes: Notes on how this opinion evolved
-├── evolution_chain: Chronological chain of opinion IDs
-├── is_contradiction: Flag for contradiction
-├── contradicts_opinion_id: ID of contradicted opinion
-├── contradiction_notes: Notes about the contradiction
-├── appearances: List of OpinionAppearance objects
-├── keywords: Associated keywords
-└── metadata: Additional metadata
-```
-
-### OpinionAppearance
-
-Represents a specific appearance of an opinion in an episode:
-
-```
-OpinionAppearance
-├── episode_id: Episode identifier
-├── episode_title: Episode title
-├── date: Episode date
-├── speakers: List of SpeakerStance objects
-├── content: Actual content from this episode
-├── context_notes: Context for this appearance
-└── evolution_notes_for_episode: Episode-specific evolution notes
-```
-
-### SpeakerStance
-
-Tracks a speaker's position on an opinion in a specific episode:
-
-```
-SpeakerStance
-├── speaker_id: Speaker identifier
-├── speaker_name: Speaker name
-├── stance: Position (support, oppose, neutral)
-├── reasoning: Explanation of stance
-├── start_time: Start timestamp
-└── end_time: End timestamp
-```
-
-## Workflow
-
-1. **Opinion Extraction**: Analyze transcripts to identify opinions
-2. **Category Classification**: Assign categories to opinions
-3. **Opinion Linking**: Connect related opinions across episodes
-4. **Evolution Tracking**: Track changes in speaker stances over time
-5. **Contradiction Detection**: Identify when opinions contradict each other
-
-## Opinion Evolution Process
-
-The opinion evolution tracking process works as follows:
-
-1. When processing a new episode:
-   - Extract opinions with their speakers and stances
-   - Categorize each opinion
-
-2. For each extracted opinion:
-   - Compare with existing opinions in the same category
-   - If it's related to an existing opinion, link them together
-   - Track how speaker positions on this opinion have changed
-
-3. After processing multiple episodes:
-   - Generate evolution timelines for each opinion
-   - Identify patterns of opinion changes for each speaker
-
-## Diagram
-
-```
-┌─────────────────┐     ┌────────────────┐     ┌───────────────────┐
-│  Episode 1      │     │  Episode 2     │     │  Episode 3        │
-│  Date: Jan 2023 │     │  Date: Feb 2023│     │  Date: Mar 2023   │
-└────────┬────────┘     └───────┬────────┘     └──────────┬────────┘
-         │                      │                         │
-         ▼                      ▼                         ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                       Opinion Database                          │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  ┌─────────────────┐                                            │
-│  │ Opinion A       │                                            │
-│  │ Category: Tech  │◄────┐                                      │
-│  └────────┬────────┘     │                                      │
-│           │              │                                      │
-│           ▼              │                                      │
-│  ┌─────────────────┐     │ contradicts                          │
-│  │ Appearance 1    │     │                                      │
-│  │ Episode: Ep1    │     │                                      │
-│  │ ┌────────────┐  │     │                                      │
-│  │ │Speaker 1   │  │     │                                      │
-│  │ │Stance: Pro │  │     │     ┌─────────────────┐             │
-│  │ └────────────┘  │     └─────┤ Opinion B       │             │
-│  └─────────────────┘           │ Category: Tech  │             │
-│                                └────────┬────────┘             │
-│                                         │                      │
-│                             evolves into│                      │
-│                                         ▼                      │
-│  ┌─────────────────┐           ┌─────────────────┐             │
-│  │ Appearance 2    │           │ Opinion C       │             │
-│  │ Episode: Ep2    │           │ Category: Tech  │◄────┐       │
-│  │ ┌────────────┐  │           └────────┬────────┘     │       │
-│  │ │Speaker 1   │  │                    │              │       │
-│  │ │Stance: Con │  │                    ▼              │       │
-│  │ └────────────┘  │           ┌─────────────────┐     │       │
-│  │ ┌────────────┐  │           │ Appearance 3    │     │       │
-│  │ │Speaker 2   │  │           │ Episode: Ep3    │     │related│
-│  │ │Stance: Pro │  │           │ ┌────────────┐  │     │       │
-│  │ └────────────┘  │           │ │Speaker 1   │  │     │       │
-│  └─────────────────┘           │ │Stance: Pro │  │     │       │
-│                                │ └────────────┘  │     │       │
-│                                └─────────────────┘     │       │
-│                                                        │       │
-│                                ┌─────────────────┐     │       │
-│                                │ Opinion D       │◄────┘       │
-│                                │ Category: Tech  │             │
-│                                └─────────────────┘             │
-│                                                                │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-## Benefits of this Architecture
-
-1. **Speaker Tracking**: Tracks individual speaker opinions over time
-2. **Contradiction Detection**: Identifies when speakers contradict themselves
-3. **Cross-Episode Analysis**: Links opinions across multiple episodes
-4. **Evolution Visualization**: Shows how opinions evolve chronologically
-5. **Multi-Speaker Support**: Handles shared opinions with different stances
-
-## Future Enhancements
-
-1. Add sentiment analysis for opinions
-2. Implement confidence scoring for opinion matches
-3. Create visualizations of opinion evolution
-4. Add support for topic clustering
-5. Develop an opinion search and filtering interface
-
-## Opinion Extraction System
-
-The opinion extraction system in AllInVault is designed to accurately extract, categorize, track, and merge opinions from podcast transcripts. The system uses a multi-stage approach to address context size limitations and improve accuracy.
-
-### System Architecture Diagram
-
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                            Opinion Extraction Service                         │
-└───────────────────────────────────┬──────────────────────────────────────────┘
-                                   │
-                                   │ Orchestrates
-                                   ▼
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                                                                              │
-│  ┌───────────────────┐    ┌──────────────────┐    ┌─────────────────────┐   │
-│  │                   │    │                  │    │                     │   │
-│  │ Raw Extraction    ├───►│ Categorization   ├───►│ Relationship        │   │
-│  │ Service           │    │ Service          │    │ Analysis Service    │   │
-│  │                   │    │                  │    │                     │   │
-│  └───────────────────┘    └──────────────────┘    └──────────┬──────────┘   │
-│                                                              │              │
-│                                                              ▼              │
-│                                                   ┌─────────────────────┐   │
-│                                                   │                     │   │
-│                                                   │ Merger Service      │   │
-│                                                   │                     │   │
-│                                                   └──────────┬──────────┘   │
-│                                                              │              │
-└──────────────────────────────────────────────────────────────┼──────────────┘
-                                                              │
-                                                              ▼
-                                         ┌──────────────────────────────────────┐
-                                         │                                      │
-                                         │ Opinion Repository                   │
-                                         │                                      │
-                                         └──────────────────────────────────────┘
-```
-
-### Component Responsibilities
-
-1. **Opinion Extraction Service**
-   - Main orchestration service
-   - Initializes and coordinates the other services
-   - Provides a high-level API for the application
-
-2. **Raw Extraction Service**
-   - Extracts raw opinions from individual episode transcripts
-   - Focuses on high-quality extraction without considering cross-episode relationships
-   - Captures complete speaker metadata (ID, name, timestamps, stance, reasoning)
-
-3. **Categorization Service**
-   - Standardizes opinion categories
-   - Groups opinions by category for focused relationship analysis
-   - Maps custom categories to standard ones
-
-4. **Relationship Analysis Service**
-   - Analyzes relationships between opinions in the same category
-   - Identifies SAME_OPINION, RELATED, EVOLUTION, and CONTRADICTION relationships
-   - Processes opinions in manageable batches
-
-5. **Merger Service**
-   - Merges opinions that represent the same core opinion
-   - Processes relationship links between opinions
-   - Creates structured Opinion objects with all metadata
-
-6. **Opinion Repository**
-   - Handles persistence of opinions
-   - Provides methods to retrieve existing opinions
-   - Ensures efficient storage and retrieval
-
-### Multi-Stage Workflow
-
-The system follows a clearly defined workflow:
-
-1. **Raw Opinion Extraction**
-   - Process each episode individually
-   - Extract detailed opinion data with speaker information
-   - Focus on quality extraction without cross-episode context
-
-2. **Categorization**
-   - Standardize categories across all opinions
-   - Group opinions by category for focused analysis
-
-3. **Relationship Analysis**
-   - Process opinions within the same category
-   - Identify relationships between opinions
-   - Analyze in smaller batches to avoid context limits
-
-4. **Opinion Merging and Finalization**
-   - Merge related opinions 
-   - Establish contradiction and evolution links
-   - Create final Opinion objects with all metadata
-
-5. **Storage**
-   - Save opinions to the repository
-   - Update episode metadata with references to opinions
-
-### Data Models
-
-The system uses three main data models:
-
-1. **Opinion**
-   - Represents a unique opinion that can appear across episodes
-   - Contains metadata, appearances, and relationship info
-
-2. **OpinionAppearance**  
-   - Represents a specific appearance of an opinion in an episode
-   - Contains episode metadata and speaker information
-
-3. **SpeakerStance**
-   - Represents a speaker's stance on an opinion
-   - Contains detailed speaker metadata and timestamps
-
-### Benefits of This Architecture
-
-1. **Scalability**
-   - Processes episodes incrementally
-   - Handles large numbers of opinions efficiently
-   - Divides work into manageable chunks
-
-2. **Accuracy**
-   - Multi-stage approach improves opinion extraction quality
-   - Categorized relationship analysis reduces noise
-   - Detailed speaker metadata enables better tracking
-
-3. **Maintainability**
-   - Clear separation of concerns
-   - Modular components that can be improved independently
-   - Well-defined interfaces between components
-
-4. **Flexibility**
-   - Easy to add new relationship types
-   - Can be extended with additional analysis steps
-   - Configurable parameters for tuning performance
-
-5. **Resilience**
-   - Each stage has independent error handling
-   - Failed operations can be retried without affecting others
-   - Detailed logging helps identify and fix issues
-
 ## LLM Integration
 
 The AllInVault platform utilizes Large Language Models (LLMs) to perform several key functions:
@@ -683,16 +158,6 @@ Key features:
 
 Alternative implementation using OpenAI models, kept for compatibility and comparison.
 
-### Usage by Services
-
-Several services utilize the LLM integration:
-
-- **SpeakerIdentificationService**: Maps anonymous speakers to real names
-- **OpinionExtractionService**: Main orchestrator for opinion analysis
-  - **RawOpinionExtractionService**: Extracts initial opinions
-  - **OpinionCategorizationService**: Categorizes opinions
-  - **OpinionRelationshipService**: Analyzes relationships
-
 ### Configuration
 
 LLM settings can be configured:
@@ -704,17 +169,455 @@ The default configuration now uses:
 - Provider: `deepseek`
 - Model: `deepseek-chat` (DeepSeek-V3)
 
-### Implementation Changes
+## Multi-format Transcript Support
 
-- Modified `DeepSeekProvider` to use DeepSeek's implementation of the API
-- Updated default provider across all services from OpenAI to DeepSeek
-- Changed default model from "gpt-4o" to "deepseek-chat"
-- Added DeepSeek API URL and client configuration
-- Ensured proper error handling for DeepSeek API responses
+AllInVault supports both JSON and TXT transcript formats:
 
-### API Format Compatibility
+1. **OpinionExtractorService Modifications**:
+   - Added `_load_txt_transcript()` method to parse TXT transcript files
+   - Updated `load_transcript()` to detect file format and choose appropriate loading method
+   - Refactored `_format_transcript_for_llm()` to handle both format structures
 
-DeepSeek API uses a format compatible with OpenAI. The primary differences are:
-- Base URL: `https://api.deepseek.com`
-- Authentication: Uses the same Bearer token format but with DeepSeek API key
-- Model name: Uses "deepseek-chat" for DeepSeek-V3
+2. **Script Updates**:
+   - Added `--transcript-format` command-line argument to specify preferred format
+   - Created `update_transcript_filenames()` function to match episodes with appropriate transcript files
+   - Enhanced logging to show transcript format information
+
+### TXT Format Handling
+
+The TXT transcript files follow this format:
+```
+# Episode Title
+Video ID: [VIDEO_ID]
+Published: [DATE]
+
+================================================================================
+
+[TIMESTAMP] Speaker N: [TEXT]
+[TIMESTAMP] Speaker N: [TEXT]
+...
+```
+
+The system parses this format and converts it to a standardized internal structure compatible with the existing JSON format processing.
+
+## Opinion Evolution Tracking System Architecture
+
+The Opinion Evolution Tracking system processes podcast episodes to extract, categorize, and track opinions expressed by speakers across multiple episodes. This comprehensive system identifies relationships between opinions, tracks their evolution, and provides insight into how opinions change over time.
+
+### System Architecture Diagram
+
+```
+┌───────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                     OPINION EVOLUTION TRACKING SYSTEM                                      │
+└───────────────────────────────────────────────────────┬───────────────────────────────────────────────────┘
+                                                        │
+                   ┌───────────────────────────────────┐│┌─────────────────────────────────────┐
+                   │         DATA PREPARATION          │││        RELATIONSHIP ANALYSIS        │
+                   │                                   │││                                     │
+                   │  ┌─────────────┐ ┌─────────────┐  │││  ┌─────────────┐  ┌─────────────┐  │
+                   │  │             │ │             │  │││  │             │  │             │  │
+                   │  │ Raw Opinion │ │Categorize & │  │││  │ Semantic    │  │ Relationship│  │
+                   │  │ Extraction  ├─►Standardize  ├──┼┼┼─►│ Similarity  ├──►Detection    │  │
+                   │  │             │ │             │  ││││ │ Analysis    │  │             │  │
+                   │  └─────────────┘ └─────────────┘  ││││ └─────────────┘  └──────┬──────┘  │
+                   │                                   ││││                          │         │
+                   └───────────────────────────────────┘│││                          │         │
+                                                        │││                          │         │
+                                                        │││                          ▼         │
+                   ┌───────────────────────────────────┐│││ ┌─────────────┐  ┌─────────────┐  │
+                   │         EVOLUTION TRACKING        ││││ │             │  │             │  │
+                   │                                   ││││ │ Contradiction│  │ Evolution   │  │
+                   │  ┌─────────────┐ ┌─────────────┐  ││││ │ Detection   │◄─┤ Tracking    │  │
+                   │  │             │ │             │  ││││ │             │  │             │  │
+                   │  │ Evolution   │ │Speaker      │  ││││ └─────────────┘  └──────┬──────┘  │
+                   │  │ Chain       │◄┤Stance       │◄─┼┼┼┘                         │         │
+                   │  │ Building    │ │Tracking     │  ││                           │         │
+                   │  └─────────────┘ └─────────────┘  ││                           │         │
+                   │                                   ││                            │         │
+                   └───────────────────────────────────┘│                            │         │
+                                                        │                            │         │
+                                                        │                            ▼         │
+                   ┌───────────────────────────────────┐│                    ┌─────────────┐  │
+                   │          DATA INTEGRATION         ││                    │             │  │
+                   │                                   ││                    │Opinion      │  │
+                   │  ┌─────────────┐ ┌─────────────┐  ││                    │Merger      │  │
+                   │  │             │ │             │  ││                    │Service     │  │
+                   │  │Unified      │ │Timeline     │  ││                    │            │  │
+                   │  │Opinion      │◄┤Generation   │◄─┼┘                    └─────────────┘  │
+                   │  │Repository   │ │             │  │                                      │
+                   │  └─────────────┘ └─────────────┘  │                                      │
+                   │                                   │                                      │
+                   └───────────────────────────────────┘                                      │
+```
+
+### Opinion Extraction Service Architecture
+
+The modular service architecture enables accurate opinion extraction, categorization, tracking, and merging:
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                            Opinion Extraction Service                         │
+└───────────────────────────────┬──────────────────────────────────────────────┘
+                               │
+                               │ Orchestrates
+                               ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                                                                              │
+│  ┌───────────────────┐    ┌──────────────────┐    ┌─────────────────────┐   │
+│  │                   │    │                  │    │                     │   │
+│  │ Raw Extraction    ├───►│ Categorization   ├───►│ Relationship        │   │
+│  │ Service           │    │ Service          │    │ Analysis Service    │   │
+│  │                   │    │                  │    │                     │   │
+│  └───────────────────┘    └──────────────────┘    └──────────┬──────────┘   │
+│                                                              │              │
+│                                                              ▼              │
+│                                                   ┌─────────────────────┐   │
+│                                                   │                     │   │
+│                                                   │ Merger Service      │   │
+│                                                   │                     │   │
+│                                                   └──────────┬──────────┘   │
+│                                                              │              │
+└──────────────────────────────────────────────────────────────┼──────────────┘
+                                                              │
+                                                              ▼
+                            ┌───────────────────────────────────────────────────┐
+                            │                                                   │
+                            │ Checkpoint Service                                │
+                            │                                                   │
+                            └───────────────────┬───────────────────────────────┘
+                                               │
+                                               ▼
+                            ┌──────────────────────────────────────┐
+                            │                                      │
+                            │ Opinion Repository                   │
+                            │                                      │
+                            └──────────────────────────────────────┘
+```
+
+### Component Responsibilities
+
+1. **Raw Extraction Service**
+   - Extracts raw opinions from individual episode transcripts
+   - Focuses on high-quality extraction without considering cross-episode relationships
+   - Captures complete speaker metadata (ID, name, timestamps, stance, reasoning)
+
+2. **Categorization Service**
+   - Standardizes opinion categories
+   - Groups opinions by category for focused relationship analysis
+   - Maps custom categories to standard ones
+
+3. **Relationship Analysis Service**
+   - Analyzes relationships between opinions in the same category
+   - Identifies SAME_OPINION, RELATED, EVOLUTION, and CONTRADICTION relationships
+   - Processes opinions in manageable batches
+
+4. **Merger Service**
+   - Merges opinions that represent the same core opinion
+   - Processes relationship links between opinions
+   - Creates structured Opinion objects with all metadata
+
+5. **Checkpoint Service**
+   - Tracks progress of the opinion extraction process
+   - Stores checkpoint data for each stage of the extraction pipeline
+   - Enables resumable processing of long-running extraction tasks
+   - Manages raw opinion data persistence during extraction
+   - Provides extraction statistics and progress information
+
+6. **Opinion Repository**
+   - Handles persistence of opinions
+   - Provides methods to retrieve existing opinions
+   - Ensures efficient storage and retrieval
+
+### Checkpoint Service Architecture
+
+The Checkpoint Service enables resumable extraction processing with the following components:
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                               Checkpoint Service                              │
+└──────────────────────────────────────┬───────────────────────────────────────┘
+                                       │
+           ┌───────────────────────────┼───────────────────────────┐
+           │                           │                           │
+           ▼                           ▼                           ▼
+┌────────────────────────┐  ┌────────────────────────┐  ┌────────────────────────┐
+│                        │  │                        │  │                        │
+│ Stage Completion       │  │ Episode Tracking       │  │ Raw Opinion Storage    │
+│ Tracking               │  │                        │  │                        │
+│                        │  │                        │  │                        │
+└────────────────────────┘  └────────────────────────┘  └────────────────────────┘
+           │                           │                           │
+           └───────────────────────────┼───────────────────────────┘
+                                       │
+                                       ▼
+                        ┌─────────────────────────────────┐
+                        │                                 │
+                        │       Checkpoint File           │
+                        │     (JSON Persistence)          │
+                        │                                 │
+                        └─────────────────────────────────┘
+```
+
+#### Key Features
+
+1. **Stage-based Checkpointing**
+   - Tracks completion of each extraction stage independently
+   - Allows skipping already completed stages when resuming
+   - Provides clear progress indication for complex extraction pipelines
+
+2. **Episode-level Tracking**
+   - Maintains a list of processed episode IDs
+   - Allows selective processing of only new episodes
+   - Prevents duplicate processing of already extracted episodes
+
+3. **Raw Opinion Persistence**
+   - Stores extracted raw opinions in a separate JSON file
+   - Enables resuming from intermediate extraction stages
+   - Reduces need to re-extract opinions from transcripts
+
+4. **Extraction Statistics**
+   - Tracks processing time for each stage
+   - Monitors number of opinions extracted
+   - Provides summary of extraction progress and completion status
+
+5. **Resumable Processing**
+   - Enables stopping and resuming long-running extraction tasks
+   - Preserves intermediate data during extraction
+   - Minimizes repeated work when process is interrupted
+
+6. **JSON-based Persistence**
+   - Uses simple JSON files for checkpoint data storage
+   - Maintains human-readable checkpoint state
+   - Enables easy debugging and manual intervention if needed
+
+### Parallel Processing Architecture
+
+The raw opinion extraction stage has been optimized with parallel processing to improve performance:
+
+```
+┌─────────────────┐     ┌─────────────────┐     ┌────────────────────┐
+│                 │     │                 │     │                    │
+│  Episode Batch  │────▶│  Thread Pool    │────▶│  Opinion Storage   │
+│                 │     │  Executor       │     │                    │
+└─────────────────┘     └─────────────────┘     └────────────────────┘
+                              │  │  │
+                              │  │  │
+                              ▼  ▼  ▼
+                        ┌─────────────────┐
+                        │  LLM Service    │
+                        │  (API Calls)    │
+                        └─────────────────┘
+```
+
+#### Key Features
+
+1. **Batched Processing**
+   - Episodes are processed in configurable batches to manage memory usage
+   - Each batch is processed completely before moving to the next
+
+2. **Thread Pool Executor**
+   - Concurrent extraction using ThreadPoolExecutor
+   - Configurable number of workers
+
+3. **Timeout Management**
+   - Each extraction job has a configurable timeout
+   - Prevents hung jobs from blocking the entire process
+
+4. **Incremental Saving**
+   - Results from each batch are saved immediately
+   - Minimizes data loss in case of interruption
+
+### Enhanced Opinion Data Models
+
+The system uses a comprehensive set of data models to represent opinions, their relationships, and evolution over time:
+
+```
+┌──────────────────┐     ┌───────────────────┐     ┌───────────────────┐
+│                  │     │                   │     │                   │
+│    Opinion       │─────┤  OpinionAppearance│─────┤   SpeakerStance   │
+│                  │     │                   │     │                   │
+└───────┬──────────┘     └───────────────────┘     └───────────────────┘
+        │                                                    ▲
+        │                                                    │
+        │                                           ┌────────┴──────────┐
+        │                                           │                   │
+        │                                           │  PreviousStance   │
+        │                                           │                   │
+        │                                           └───────────────────┘
+        │
+        │
+        ├───────────────┐     ┌───────────────────┐     ┌───────────────────┐
+        │               │     │                   │     │                   │
+        ▼               │     │                   │     │                   │
+┌──────────────────┐    │     │   Relationship    │─────┤RelationshipEvidence│
+│                  │    │     │                   │     │                   │
+│  EvolutionChain  │    │     └───────────────────┘     └───────────────────┘
+│                  │    │
+└───────┬──────────┘    │
+        │               │
+        │               │
+        ▼               │     ┌───────────────────┐     ┌───────────────────┐
+┌──────────────────┐    │     │                   │     │                   │
+│                  │    │     │   SpeakerJourney  │─────┤SpeakerJourneyNode │
+│  EvolutionNode   │    │     │                   │     │                   │
+│                  │    │     └───────────────────┘     └───────────────────┘
+└──────────────────┘    │
+        ▲               │
+        │               │
+        │               │     ┌───────────────────┐     ┌───────────────────┐
+        │               │     │                   │     │                   │
+        └───────────────┼─────┤  EvolutionPattern │     │   MergeRecord     │─────┐
+                        │     │                   │     │                   │     │
+                        │     └───────────────────┘     └───────────────────┘     │
+                        │                                                          │
+                        │                                                          │
+                        │                                                          ▼
+                        │                                               ┌───────────────────┐
+                        │                                               │                   │
+                        └───────────────────────────────────────────────┤ConflictResolution │
+                                                                        │                   │
+                                                                        └───────────────────┘
+```
+
+#### Core Opinion Models
+
+- **Opinion**: The central model representing a unique opinion that can appear across multiple episodes
+  - Contains metadata, description, category info, and appearances
+  - Tracks relationships with other opinions
+  - Contains evolution chain info
+  
+- **OpinionAppearance**: Represents an appearance of an opinion in a specific episode
+  - Links to episode metadata
+  - Contains speaker stances for this appearance
+  - Tracks episode-specific content and context
+
+- **SpeakerStance**: Models a speaker's stance on an opinion in a specific episode
+  - Tracks support, opposition, or neutrality
+  - Includes reasoning behind the stance
+  - Contains timing information
+
+#### Evolution Tracking Models
+
+- **EvolutionChain**: Represents the chronological progression of an opinion across episodes
+  - Contains ordered nodes representing opinion evolution points
+  - Tracks pattern classification
+  - Provides overall evolution metadata
+
+- **EvolutionNode**: Models a single point in an opinion's evolution
+  - Links to a specific opinion ID and episode
+  - Classifies the evolution type (initial, refinement, pivot, etc.)
+  - Contains description of the evolution at this point
+
+- **EvolutionPattern**: Represents common patterns in opinion evolution
+  - Provides pattern name and description
+  - Lists typical steps in this pattern
+  - Links to example chains that exhibit this pattern
+
+#### Speaker Journey Models
+
+- **SpeakerJourney**: Tracks a speaker's stance evolution across episodes
+  - Contains speaker metadata
+  - Maps opinions to journey nodes
+  - Provides current stances on all opinions
+
+- **SpeakerJourneyNode**: Represents a point in a speaker's journey with a specific stance
+  - Links to opinion and episode
+  - Tracks stance changes
+  - Provides reasoning for stance positions
+
+- **PreviousStance**: Extends SpeakerStance to track historical stances
+  - Contains metadata about when and why a stance changed
+  - Links to the episode where the change occurred
+  - Tracks what the stance changed to
+
+#### Relationship Models
+
+- **Relationship**: Models connections between opinions
+  - Classifies relationship type (same, similar, evolution, contradiction)
+  - Contains directional information
+  - Includes confidence scores and evidence
+
+- **RelationshipEvidence**: Provides evidence for why a relationship exists
+  - Describes the evidence in detail
+  - Classifies evidence type (semantic, lexical, temporal, logical, LLM)
+  - Includes confidence score for this piece of evidence
+
+#### Merge Tracking Models
+
+- **MergeRecord**: Tracks when opinions are merged together
+  - Contains source and resulting opinion IDs
+  - Includes merge rationale and method
+  - Tracks conflicts that occurred during merge
+
+- **ConflictResolution**: Models how a conflict was resolved during opinion merging
+  - Documents the conflict field and conflicting values
+  - Tracks resolution method and reasoning
+  - Includes confidence in the resolution
+
+These models work together to provide a comprehensive system for tracking opinions, their relationships, and their evolution across podcast episodes, while maintaining the history of speaker stances and opinion merges.
+
+## Key Algorithms
+
+### Semantic Similarity Detection
+
+Uses a multi-faceted approach:
+1. Embedding-based similarity (using sentence transformers)
+2. LLM verification for borderline cases
+3. Contextual analysis considering speaker, episode context, and timestamps
+
+### Evolution Chain Building
+
+1. Sorts opinions chronologically
+2. Identifies evolution relationships between opinions
+3. Constructs chains showing how opinions develop over time
+4. Classifies evolution types (refinement, pivot, expansion, contraction)
+
+### Speaker Stance Analysis
+
+1. Tracks each speaker's stance on opinions
+2. Identifies changes in stance over time
+3. Provides reasoning for stance changes
+4. Detects contradictions within a speaker's statements
+
+### Checkpoint and Recovery
+
+1. Tracks progress through extraction stages
+2. Persists intermediate extraction data
+3. Identifies already processed episodes
+4. Provides resumable extraction capabilities
+5. Optimizes extraction by skipping completed stages
+
+## Benefits of This Architecture
+
+1. **Scalability**: Pipeline stages can be executed independently or in sequence
+2. **Flexibility**: Each component can be replaced or extended without affecting others
+3. **Maintainability**: Clear separation of concerns makes the codebase easier to maintain
+4. **Extensibility**: New features can be added by creating new pipeline stages
+5. **Robustness**: Each stage can handle errors independently, preventing pipeline failure
+6. **Comprehensive Tracking**: Complete history of opinions across episodes
+7. **Evolution Analysis**: Visibility into how opinions change over time
+8. **Speaker Consistency**: Ability to track speaker positions on topics
+9. **Resumable Processing**: Ability to resume long-running extraction tasks after interruption
+10. **Progress Tracking**: Detailed visibility into extraction progress and completion status
+
+## Technology Stack
+
+- **Language**: Python 3.9+
+- **NLP Libraries**: Sentence Transformers, spaCy
+- **Machine Learning**: PyTorch, scikit-learn
+- **LLM Integration**: OpenAI API, DeepSeek API
+- **Data Storage**: JSON files with structured schemas
+- **Visualization**: Matplotlib, Plotly
+
+## Future Enhancements
+
+1. Database integration for more efficient data storage and retrieval
+2. Advanced opinion evolution visualization tools
+3. Support for additional LLM providers
+4. API layer for web/mobile application integration
+5. Semantic search for finding related opinions across different wording
+6. Streaming transcript processing for very large files
+7. Additional transcript format support (SRT, VTT, etc.)
+8. Distributed processing for large-scale extraction tasks
+9. Real-time extraction progress monitoring interface
+10. Advanced checkpoint compression for efficient storage
