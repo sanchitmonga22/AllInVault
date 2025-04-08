@@ -107,7 +107,7 @@ class OpinionCategorizationService(BaseOpinionService):
         
         # Try to match through the category repository if available
         if self.category_repository:
-            existing_category = self.category_repository.find_category_by_name(raw_category)
+            existing_category = self.category_repository.get_category_by_name(raw_category)
             if existing_category:
                 self.category_mapping_cache[raw_lower] = existing_category.name
                 return existing_category.name

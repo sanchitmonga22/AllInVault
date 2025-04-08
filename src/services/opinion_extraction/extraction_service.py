@@ -20,6 +20,9 @@ from src.services.opinion_extraction.raw_extraction_service import RawOpinionExt
 from src.services.opinion_extraction.categorization_service import OpinionCategorizationService
 from src.services.opinion_extraction.relationship_service import OpinionRelationshipService
 from src.services.opinion_extraction.merger_service import OpinionMergerService
+from src.services.opinion_extraction.evolution_service import EvolutionDetectionService
+from src.services.opinion_extraction.speaker_tracking_service import SpeakerTrackingService
+from src.services.opinion_extraction.checkpoint_service import CheckpointService
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -34,6 +37,8 @@ class OpinionExtractionService:
     2. Categorize and group opinions by category
     3. Analyze relationships between opinions in the same category
     4. Merge related opinions and create final Opinion objects
+    5. Build evolution chains from relationships
+    6. Track speaker stances and journeys across episodes
     """
     
     def __init__(self, 
@@ -43,6 +48,8 @@ class OpinionExtractionService:
                  llm_model: Optional[str] = None,
                  opinions_file_path: str = "data/json/opinions.json",
                  categories_file_path: str = "data/json/categories.json",
+                 checkpoint_path: str = CheckpointService.DEFAULT_CHECKPOINT_PATH,
+                 raw_opinions_path: str = CheckpointService.DEFAULT_RAW_OPINIONS_PATH,
                  relation_batch_size: int = 20,
                  max_opinions_per_episode: int = 15,
                  similarity_threshold: float = 0.7):
@@ -56,6 +63,8 @@ class OpinionExtractionService:
             llm_model: Model name for the LLM provider
             opinions_file_path: Path to store opinions
             categories_file_path: Path to store categories
+            checkpoint_path: Path to store checkpoints
+            raw_opinions_path: Path to store raw opinions
             relation_batch_size: Maximum number of opinions to compare in relationship analysis
             max_opinions_per_episode: Maximum number of opinions to extract per episode
             similarity_threshold: Threshold for opinion similarity to be considered related
@@ -81,6 +90,12 @@ class OpinionExtractionService:
         self.opinion_repository = OpinionRepository(opinions_file_path)
         self.category_repository = CategoryRepository(categories_file_path)
         
+        # Initialize checkpoint service
+        self.checkpoint_service = CheckpointService(
+            checkpoint_path=checkpoint_path,
+            raw_opinions_path=raw_opinions_path
+        )
+        
         # Initialize component services
         self.raw_extraction_service = RawOpinionExtractionService(
             llm_service=self.llm_service,
@@ -102,6 +117,15 @@ class OpinionExtractionService:
             opinion_repository=self.opinion_repository,
             category_repository=self.category_repository
         )
+
+        # Initialize evolution and speaker tracking services
+        self.evolution_service = EvolutionDetectionService(
+            opinion_repository=self.opinion_repository
+        )
+        
+        self.speaker_tracking_service = SpeakerTrackingService(
+            opinion_repository=self.opinion_repository
+        )
         
         # Configuration
         self.relation_batch_size = relation_batch_size
@@ -111,7 +135,10 @@ class OpinionExtractionService:
     def extract_opinions(
         self, 
         episodes: List[PodcastEpisode], 
-        transcripts_dir: str
+        transcripts_dir: str,
+        resume_from_checkpoint: bool = True,
+        save_checkpoints: bool = True,
+        start_stage: str = "raw_extraction"
     ) -> List[PodcastEpisode]:
         """
         Extract opinions from multiple episodes using the multi-stage approach.
@@ -119,6 +146,9 @@ class OpinionExtractionService:
         Args:
             episodes: List of episodes to process
             transcripts_dir: Directory containing transcript files
+            resume_from_checkpoint: Whether to resume from the last checkpoint
+            save_checkpoints: Whether to save checkpoints during processing
+            start_stage: Stage to start processing from
             
         Returns:
             List of updated episodes
@@ -126,6 +156,16 @@ class OpinionExtractionService:
         if not self.use_llm or not self.llm_service:
             logger.warning("LLM is required for opinion extraction but not available")
             return episodes
+
+        # Convert start_stage to int for comparison
+        start_stage_int = {
+            "raw_extraction": 0,
+            "categorization": 1,
+            "relationship_analysis": 2,
+            "opinion_merging": 3,
+            "evolution_detection": 4,
+            "speaker_tracking": 5
+        }.get(start_stage, 0)
         
         # Process episodes in chronological order
         sorted_episodes = sorted(
@@ -134,87 +174,263 @@ class OpinionExtractionService:
             reverse=False
         )
         
-        # Stage 1: Extract raw opinions from each episode
+        # Get checkpoint data if resuming
         all_raw_opinions = []
-        updated_episodes = []
+        if resume_from_checkpoint:
+            # Load previously processed episodes and raw opinions
+            processed_episode_ids = self.checkpoint_service.get_processed_episodes()
+            logger.info(f"Resuming from checkpoint with {len(processed_episode_ids)} processed episodes")
+            
+            # Load raw opinions from previous run
+            all_raw_opinions = self.checkpoint_service.load_raw_opinions() or []
+            if all_raw_opinions:
+                logger.info(f"Loaded {len(all_raw_opinions)} raw opinions from checkpoint")
+            
+            # Skip any episodes that were already processed
+            sorted_episodes = [ep for ep in sorted_episodes if ep.video_id not in processed_episode_ids]
+            
+            # Check if we have already completed all stages
+            last_completed_stage = self.checkpoint_service.get_episode_stage(self.checkpoint_service.checkpoint_data.get("last_processed_episode"))
+            if last_completed_stage == "speaker_tracking" and not sorted_episodes:
+                logger.info("All episodes have been processed and all stages are complete")
+                # Return original episodes since they already have opinion metadata
+                return episodes
         
-        for episode in sorted_episodes:
-            # Skip episodes without transcripts
-            if not episode.transcript_filename:
-                logger.warning(f"Episode {episode.title} has no transcript")
-                updated_episodes.append(episode)
-                continue
-            
-            # Ensure we're using a TXT transcript
-            if not episode.transcript_filename.lower().endswith('.txt'):
-                logger.warning(f"Episode {episode.title} has non-TXT transcript: {episode.transcript_filename}")
-                updated_episodes.append(episode)
-                continue
+        # Skip raw extraction if starting from a later stage
+        if start_stage_int <= 0:
+            # Stage 1: Extract raw opinions from each episode
+            updated_episodes = []
+            for episode in sorted_episodes:
+                # Skip episodes without transcripts
+                if not episode.transcript_filename:
+                    logger.warning(f"Episode {episode.title} has no transcript")
+                    updated_episodes.append(episode)
+                    continue
                 
-            transcript_path = os.path.join(transcripts_dir, episode.transcript_filename)
-            if not os.path.exists(transcript_path):
-                logger.warning(f"Transcript file {transcript_path} not found")
+                # Check if episode has already been processed
+                if resume_from_checkpoint and self.checkpoint_service.is_episode_processed(episode.video_id):
+                    logger.info(f"Skipping already processed episode: {episode.title}")
+                    updated_episodes.append(episode)
+                    continue
+                    
+                # Ensure we're using a TXT transcript
+                if not episode.transcript_filename.lower().endswith('.txt'):
+                    logger.warning(f"Episode {episode.title} has non-TXT transcript: {episode.transcript_filename}")
+                    updated_episodes.append(episode)
+                    continue
+                    
+                transcript_path = os.path.join(transcripts_dir, episode.transcript_filename)
+                if not os.path.exists(transcript_path):
+                    logger.warning(f"Transcript file {transcript_path} not found")
+                    updated_episodes.append(episode)
+                    continue
+                
+                logger.info(f"Extracting raw opinions from episode: {episode.title}")
+                
+                # Extract raw opinions from this episode
+                raw_opinions = self.raw_extraction_service.extract_raw_opinions(
+                    episode=episode,
+                    transcript_path=transcript_path
+                )
+                
+                if raw_opinions:
+                    logger.info(f"Extracted {len(raw_opinions)} raw opinions from {episode.title}")
+                    all_raw_opinions.extend(raw_opinions)
+                    
+                    # Update the episode metadata
+                    if "opinions" not in episode.metadata:
+                        episode.metadata["opinions"] = {}
+                    
+                    # Add opinion IDs to episode metadata
+                    for opinion in raw_opinions:
+                        episode.metadata["opinions"][opinion["id"]] = {
+                            "title": opinion["title"],
+                            "category": opinion["category"]
+                        }
+                    
+                    # Mark episode as processed in checkpoint
+                    if save_checkpoints:
+                        self.checkpoint_service.mark_episode_complete(episode.video_id)
+                        # Save raw opinions to checkpoint
+                        self.checkpoint_service.save_raw_opinions(all_raw_opinions)
+                
                 updated_episodes.append(episode)
-                continue
+        else:
+            updated_episodes = sorted_episodes
+            # Load existing raw opinions since we're skipping extraction
+            all_raw_opinions = self.checkpoint_service.load_raw_opinions() or []
+            if not all_raw_opinions:
+                logger.error("No raw opinions found in checkpoint, cannot continue without raw opinions")
+                return episodes
+            logger.info(f"Loaded {len(all_raw_opinions)} existing raw opinions from checkpoint")
+        
+        # Skip further processing if there are no raw opinions
+        if not all_raw_opinions:
+            logger.warning("No raw opinions available, skipping further processing")
+            return episodes
             
-            logger.info(f"Extracting raw opinions from episode: {episode.title}")
-            
-            # Extract raw opinions from this episode
-            raw_opinions = self.raw_extraction_service.extract_raw_opinions(
-                episode=episode,
-                transcript_path=transcript_path
+        # Mark raw extraction stage as complete if we loaded existing opinions
+        if save_checkpoints and start_stage_int > 0:
+            self.checkpoint_service.mark_episode_stage_complete(
+                episode_id=self.checkpoint_service.checkpoint_data.get("last_processed_episode", "initial"),
+                stage="raw_extraction"
             )
-            
-            if raw_opinions:
-                logger.info(f"Extracted {len(raw_opinions)} raw opinions from {episode.title}")
-                all_raw_opinions.extend(raw_opinions)
-                
-                # Update the episode metadata
-                if "opinions" not in episode.metadata:
-                    episode.metadata["opinions"] = {}
-                
-                # Add opinion IDs to episode metadata
-                for opinion in raw_opinions:
-                    episode.metadata["opinions"][opinion["id"]] = {
-                        "title": opinion["title"],
-                        "category": opinion["category"]
-                    }
-            
-            updated_episodes.append(episode)
         
         # Stage 2: Categorize and group opinions
-        logger.info(f"Categorizing {len(all_raw_opinions)} raw opinions")
-        categorized_opinions = self.categorization_service.categorize_opinions(all_raw_opinions)
+        if start_stage_int <= 1:
+            logger.info(f"Categorizing {len(all_raw_opinions)} raw opinions")
+            categorized_opinions = self.categorization_service.categorize_opinions(all_raw_opinions)
+            
+            # Ensure all categories exist in the repository
+            self.categorization_service.ensure_categories_exist(list(categorized_opinions.keys()))
+            
+            # Mark categorization stage as complete
+            if save_checkpoints:
+                self.checkpoint_service.mark_episode_stage_complete(
+                    episode_id=self.checkpoint_service.checkpoint_data.get("last_processed_episode", "initial"),
+                    stage="categorization"
+                )
         
-        # Ensure all categories exist in the repository
-        self.categorization_service.ensure_categories_exist(list(categorized_opinions.keys()))
-        
-        # Stage 3: Analyze relationships between opinions in the same category
-        logger.info("Analyzing relationships between opinions")
-        relationship_data = self.relationship_service.analyze_relationships(categorized_opinions)
+        # Stage 3: Analyze relationships between opinions
+        if start_stage_int <= 2:
+            logger.info("Analyzing relationships between opinions")
+            categorized_opinions = self.categorization_service.categorize_opinions(all_raw_opinions)
+            relationship_data = self.relationship_service.analyze_relationships(categorized_opinions)
+            
+            # Mark relationship analysis stage as complete
+            if save_checkpoints:
+                self.checkpoint_service.mark_episode_stage_complete(
+                    episode_id=self.checkpoint_service.checkpoint_data.get("last_processed_episode", "initial"),
+                    stage="relationship_analysis"
+                )
         
         # Stage 4: Process relationships and merge opinions
-        logger.info("Processing relationships and merging opinions")
+        if start_stage_int <= 3:
+            logger.info("Processing relationships and merging opinions")
+            categorized_opinions = self.categorization_service.categorize_opinions(all_raw_opinions)
+            relationship_data = self.relationship_service.analyze_relationships(categorized_opinions)
+            final_opinions_data = self.merger_service.process_relationships(
+                raw_opinions=all_raw_opinions,
+                relationship_data=relationship_data
+            )
+            
+            # Create structured Opinion objects
+            logger.info("Creating final Opinion objects")
+            final_opinions = self.merger_service.create_opinion_objects(final_opinions_data)
+            
+            # Mark merging stage as complete
+            if save_checkpoints:
+                self.checkpoint_service.mark_episode_stage_complete(
+                    episode_id=self.checkpoint_service.checkpoint_data.get("last_processed_episode", "initial"),
+                    stage="opinion_merging"
+                )
+        
+        # Stage 5: Evolution detection
+        if start_stage_int <= 4:
+            logger.info("Analyzing opinion evolution")
+            categorized_opinions = self.categorization_service.categorize_opinions(all_raw_opinions)
+            relationship_data = self.relationship_service.analyze_relationships(categorized_opinions)
+            final_opinions_data = self.merger_service.process_relationships(
+                raw_opinions=all_raw_opinions,
+                relationship_data=relationship_data
+            )
+            final_opinions = self.merger_service.create_opinion_objects(final_opinions_data)
+            
+            # Get relationships for evolution analysis
+            relationships = self.relationship_service.get_relationships_from_data(relationship_data)
+            
+            # Analyze evolution
+            evolution_data = self.evolution_service.analyze_opinion_evolution(
+                opinions=final_opinions,
+                relationships=relationships
+            )
+            
+            # Mark evolution detection stage as complete
+            if save_checkpoints:
+                self.checkpoint_service.mark_episode_stage_complete(
+                    episode_id=self.checkpoint_service.checkpoint_data.get("last_processed_episode", "initial"),
+                    stage="evolution_detection"
+                )
+        
+        # Stage 6: Speaker tracking
+        if start_stage_int <= 5:
+            logger.info("Tracking speaker behavior")
+            categorized_opinions = self.categorization_service.categorize_opinions(all_raw_opinions)
+            relationship_data = self.relationship_service.analyze_relationships(categorized_opinions)
+            final_opinions_data = self.merger_service.process_relationships(
+                raw_opinions=all_raw_opinions,
+                relationship_data=relationship_data
+            )
+            final_opinions = self.merger_service.create_opinion_objects(final_opinions_data)
+            
+            # Track speaker behavior
+            speaker_data = self.speaker_tracking_service.analyze_speaker_behavior(
+                opinions=final_opinions
+            )
+            
+            # Mark speaker tracking stage as complete
+            if save_checkpoints:
+                self.checkpoint_service.mark_episode_stage_complete(
+                    episode_id=self.checkpoint_service.checkpoint_data.get("last_processed_episode", "initial"),
+                    stage="speaker_tracking"
+                )
+        
+        # Save final results
+        categorized_opinions = self.categorization_service.categorize_opinions(all_raw_opinions)
+        relationship_data = self.relationship_service.analyze_relationships(categorized_opinions)
         final_opinions_data = self.merger_service.process_relationships(
             raw_opinions=all_raw_opinions,
             relationship_data=relationship_data
         )
-        
-        # Stage 5: Create structured Opinion objects
-        logger.info("Creating final Opinion objects")
         final_opinions = self.merger_service.create_opinion_objects(final_opinions_data)
         
-        # Stage 6: Save opinions to repository
         if final_opinions:
             logger.info(f"Saving {len(final_opinions)} opinions to repository")
             self.merger_service.save_opinions(final_opinions)
+            
+            # Get relationships for evolution analysis
+            relationships = self.relationship_service.get_relationships_from_data(relationship_data)
+            
+            # Analyze evolution and save evolution data
+            evolution_data = self.evolution_service.analyze_opinion_evolution(
+                opinions=final_opinions, 
+                relationships=relationships
+            )
+            
+            # Save evolution chains and update opinions with evolution data
+            self.evolution_service.save_evolution_data(
+                opinions=final_opinions,
+                evolution_chains=evolution_data.get('evolution_chains', []),
+                speaker_journeys=evolution_data.get('speaker_journeys', [])
+            )
+            
+            # Mark the process as complete
+            if save_checkpoints:
+                self.checkpoint_service.mark_episode_stage_complete(
+                    episode_id=self.checkpoint_service.checkpoint_data.get("last_processed_episode", "initial"),
+                    stage="complete"
+                )
+                logger.info("Opinion extraction process completed successfully")
+                
+                # Print extraction stats
+                stats = self.checkpoint_service.get_extraction_stats()
+                logger.info(f"Extraction stats: {stats}")
         
-        return updated_episodes
+        # Get all processed episodes (including previously processed ones)
+        all_updated_episodes = episodes.copy()
+        for i, episode in enumerate(all_updated_episodes):
+            for updated_ep in updated_episodes:
+                if updated_ep.video_id == episode.video_id:
+                    all_updated_episodes[i] = updated_ep
+                    break
+        
+        return all_updated_episodes
     
     def extract_opinions_from_transcript(
         self, 
         episode: PodcastEpisode, 
-        transcript_path: str
+        transcript_path: str,
+        save_checkpoint: bool = True
     ) -> List[Opinion]:
         """
         Extract opinions from a single transcript.
@@ -224,6 +440,7 @@ class OpinionExtractionService:
         Args:
             episode: The podcast episode metadata
             transcript_path: Path to the transcript TXT file
+            save_checkpoint: Whether to save checkpoints during processing
             
         Returns:
             List of extracted opinions
@@ -231,6 +448,18 @@ class OpinionExtractionService:
         if not self.use_llm or not self.llm_service:
             logger.warning("LLM is required for opinion extraction but not available")
             return []
+        
+        # Check if episode is already processed
+        if self.checkpoint_service.is_episode_processed(episode.video_id):
+            logger.info(f"Episode {episode.title} already processed, checking if extraction is complete")
+            
+            # If extraction is completed, load existing opinions for this episode
+            if self.checkpoint_service.get_episode_stage(self.checkpoint_service.checkpoint_data.get("last_processed_episode")) == CheckpointService.STAGE_COMPLETE:
+                existing_opinions = self.opinion_repository.get_all_opinions()
+                episode_opinions = [op for op in existing_opinions if op.episode_id == episode.video_id]
+                if episode_opinions:
+                    logger.info(f"Found {len(episode_opinions)} opinions for episode {episode.title}")
+                    return episode_opinions
         
         # Extract raw opinions
         raw_opinions = self.raw_extraction_service.extract_raw_opinions(
@@ -242,6 +471,16 @@ class OpinionExtractionService:
             logger.warning(f"No raw opinions extracted from {episode.title}")
             return []
         
+        # Save raw opinions to checkpoint
+        if save_checkpoint:
+            # Mark episode as processed
+            self.checkpoint_service.mark_episode_complete(episode.video_id)
+            
+            # Save the raw opinions
+            all_raw_opinions = self.checkpoint_service.load_raw_opinions() or []
+            all_raw_opinions.extend(raw_opinions)
+            self.checkpoint_service.save_raw_opinions(all_raw_opinions)
+        
         # Categorize opinions
         categorized_opinions = self.categorization_service.categorize_opinions(raw_opinions)
         
@@ -249,82 +488,65 @@ class OpinionExtractionService:
         existing_opinions = self.opinion_repository.get_all_opinions()
         existing_opinions_data = []
         
-        for op in existing_opinions:
-            # Convert Opinion objects to dictionaries for comparison
-            op_dict = {
-                "id": op.id,
-                "title": op.title,
-                "description": op.description,
-                "category": op.category_id,
-                "related_opinions": op.related_opinions,
-                "is_contradiction": op.is_contradiction,
-                "contradicts_opinion_id": op.contradicts_opinion_id,
-                "keywords": op.keywords
+        for opinion in existing_opinions:
+            # Convert to dictionary format for relationship analysis
+            opinion_dict = {
+                "id": opinion.id,
+                "title": opinion.title,
+                "description": opinion.description,
+                "category": opinion.category_id
             }
-            
-            # Add appearances
-            appearances = []
-            for app in op.appearances:
-                app_dict = {
-                    "episode_id": app.episode_id,
-                    "episode_title": app.episode_title,
-                    "episode_date": app.date,
-                    "content": app.content
-                }
-                
-                # Add speakers to the appearance
-                speakers = []
-                for spk in app.speakers:
-                    spk_dict = {
-                        "speaker_id": spk.speaker_id,
-                        "speaker_name": spk.speaker_name,
-                        "stance": spk.stance,
-                        "reasoning": spk.reasoning,
-                        "start_time": spk.start_time,
-                        "end_time": spk.end_time
-                    }
-                    speakers.append(spk_dict)
-                
-                app_dict["speakers"] = speakers
-                appearances.append(app_dict)
-            
-            op_dict["appearances"] = appearances
-            existing_opinions_data.append(op_dict)
+            existing_opinions_data.append(opinion_dict)
         
-        # Combine all opinions for relationship analysis
-        all_opinions = existing_opinions_data.copy()
-        for category_opinions in categorized_opinions.values():
-            all_opinions.extend(category_opinions)
-        
-        # Group all opinions by category
-        all_categorized_opinions = {}
-        for opinion in all_opinions:
-            category = opinion.get("category", "Uncategorized")
-            if category not in all_categorized_opinions:
-                all_categorized_opinions[category] = []
-            all_categorized_opinions[category].append(opinion)
+        # Combine with existing opinions for relationship analysis
+        combined_opinions = {}
+        for category, opinions in categorized_opinions.items():
+            combined_opinions[category] = opinions + [op for op in existing_opinions_data if op.get("category") == category]
         
         # Analyze relationships
-        relationship_data = self.relationship_service.analyze_relationships(all_categorized_opinions)
+        relationship_data = self.relationship_service.analyze_relationships(combined_opinions)
         
-        # Process relationships and merge
+        # Process relationships and merge opinions
         final_opinions_data = self.merger_service.process_relationships(
-            raw_opinions=all_opinions,
+            raw_opinions=raw_opinions + existing_opinions_data,
             relationship_data=relationship_data
         )
         
-        # Create Opinion objects and save
-        final_opinions = self.merger_service.create_opinion_objects(final_opinions_data)
+        # Create Opinion objects
+        opinions = self.merger_service.create_opinion_objects(final_opinions_data)
         
-        if final_opinions:
-            self.merger_service.save_opinions(final_opinions)
+        # Get relationships
+        relationships = self.relationship_service.get_relationships_from_data(relationship_data)
         
-        # Filter to return only opinions from this episode
-        episode_opinions = []
-        for opinion in final_opinions:
-            for appearance in opinion.appearances:
-                if appearance.episode_id == episode.video_id:
-                    episode_opinions.append(opinion)
-                    break
+        # Analyze evolution
+        evolution_data = self.evolution_service.analyze_opinion_evolution(
+            opinions=opinions, 
+            relationships=relationships
+        )
         
-        return episode_opinions 
+        # Track speaker behavior
+        speaker_data = self.speaker_tracking_service.analyze_speaker_behavior(
+            opinions=opinions
+        )
+        
+        # Save all data
+        self.merger_service.save_opinions(opinions)
+        self.evolution_service.save_evolution_data(
+            opinions=opinions,
+            evolution_chains=evolution_data.get('evolution_chains', []),
+            speaker_journeys=evolution_data.get('speaker_journeys', [])
+        )
+        
+        # Mark all stages as complete for this single episode
+        if save_checkpoint:
+            self.checkpoint_service.mark_stage_complete(CheckpointService.STAGE_COMPLETE)
+        
+        return opinions
+    
+    def reset_extraction_process(self) -> None:
+        """
+        Reset the extraction process by clearing all checkpoints.
+        This allows starting the extraction process from scratch.
+        """
+        self.checkpoint_service.reset_checkpoint()
+        logger.info("Extraction process has been reset, all checkpoints cleared") 
