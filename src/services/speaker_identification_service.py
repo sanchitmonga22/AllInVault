@@ -24,7 +24,7 @@ class SpeakerIdentificationService:
     
     def __init__(self, 
                  use_llm: bool = True,
-                 llm_provider: str = "openai",
+                 llm_provider: str = "deepseek",
                  llm_api_key: Optional[str] = None,
                  llm_model: Optional[str] = None):
         """
@@ -32,7 +32,7 @@ class SpeakerIdentificationService:
         
         Args:
             use_llm: Whether to use LLM for speaker identification
-            llm_provider: LLM provider ('openai' or 'deepseq')
+            llm_provider: LLM provider ('openai' or 'deepseek')
             llm_api_key: API key for the LLM provider
             llm_model: Model name for the LLM provider
         """
