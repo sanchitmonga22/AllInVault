@@ -420,31 +420,208 @@ Format your response as a JSON array of relationship objects.
         """
         relationships = []
         
+        # Stats for logging
+        composite_id_count = 0
+        original_id_count = 0
+        invalid_id_count = 0
+        successful_id_extractions = 0
+        
+        logger.info(f"Processing {len(relationship_data)} relationships for ID normalization")
+        
+        # Sample some raw relationship entries for debugging
+        if relationship_data and len(relationship_data) > 0:
+            sample_size = min(5, len(relationship_data))
+            logger.info(f"Sample of raw relationship entries:")
+            for i, rel in enumerate(relationship_data[:sample_size]):
+                logger.info(f"Raw relationship {i+1}: {rel}")
+        
         for rel in relationship_data:
             if not isinstance(rel, dict):
+                logger.warning(f"Invalid relationship data (not a dictionary): {rel}")
+                invalid_id_count += 1
                 continue
                 
             # Extract the original opinion IDs if available, otherwise use the composite IDs
-            source_id = rel.get("original_source_id", rel.get("source_id", ""))
-            target_id = rel.get("original_target_id", rel.get("target_id", ""))
+            source_id = rel.get("source_id", "")
+            target_id = rel.get("target_id", "")
             
-            # If we're using composite IDs, extract just the opinion part
-            if "_" in source_id and "original_source_id" not in rel:
-                source_id = source_id.split("_")[0]
-            if "_" in target_id and "original_target_id" not in rel:
-                target_id = target_id.split("_")[0]
+            if not source_id or not target_id:
+                logger.warning(f"Missing source_id or target_id in relationship: {rel}")
+                invalid_id_count += 1
+                continue
+            
+            # Keep track of the original composite IDs for debugging
+            original_source_id_composite = source_id
+            original_target_id_composite = target_id
+            
+            # Extract original opinion ID and episode ID
+            # Check if this is a composite ID containing both opinion ID and episode ID
+            original_source_id = rel.get("original_source_id", "")
+            original_target_id = rel.get("original_target_id", "")
+            source_episode_id = rel.get("source_episode_id", "")
+            target_episode_id = rel.get("target_episode_id", "")
+            
+            # If original IDs were provided directly, use them
+            if original_source_id and original_target_id:
+                # Use the provided episode IDs or try to extract from original IDs
+                if not source_episode_id and "_" in original_source_id:
+                    # Try to extract episode ID from original ID
+                    parts = original_source_id.split("_", 1)
+                    if len(parts) > 1:
+                        source_episode_id = parts[1]
+                        logger.debug(f"Extracted source episode ID from original ID: {source_episode_id}")
                 
+                if not target_episode_id and "_" in original_target_id:
+                    # Try to extract episode ID from original ID
+                    parts = original_target_id.split("_", 1)
+                    if len(parts) > 1:
+                        target_episode_id = parts[1]
+                        logger.debug(f"Extracted target episode ID from original ID: {target_episode_id}")
+                
+                # Keep track of successful extractions
+                successful_id_extractions += 1
+                logger.debug(f"Using provided original IDs: {original_source_id}, {original_target_id}")
+                logger.debug(f"Episode IDs: source={source_episode_id}, target={target_episode_id}")
+            else:
+                # Otherwise try to parse from the composite ID
+                try:
+                    # Extract source ID components
+                    if "_" in source_id:
+                        # Handle case where ID has pattern: number_episode_episode (duplicated episode ID)
+                        if source_id.count("_") >= 2 and source_id.endswith("_" + source_id.split("_")[-1]):
+                            # Extract episode ID (last part)
+                            source_episode_id = source_id.split("_")[-1]
+                            # Extract original ID (everything before the last underscore)
+                            temp = source_id.rsplit("_", 1)[0]
+                            # If still contains underscore, it might be number_episode format
+                            if "_" in temp:
+                                opinion_number, first_episode = temp.split("_", 1)
+                                # Check if first_episode and source_episode_id are the same
+                                if first_episode == source_episode_id:
+                                    original_source_id = opinion_number
+                                else:
+                                    original_source_id = temp
+                            else:
+                                original_source_id = temp
+                        else:
+                            # Standard format: number_episode
+                            parts = source_id.split("_", 1)
+                            original_source_id = parts[0]
+                            source_episode_id = parts[1] if len(parts) > 1 else ""
+                        
+                        logger.debug(f"Parsed source ID {source_id} -> opinion: {original_source_id}, episode: {source_episode_id}")
+                        composite_id_count += 1
+                    else:
+                        original_source_id = source_id
+                        # If episode ID is already provided in the relationship, use it
+                        if not source_episode_id:
+                            source_episode_id = rel.get("source_episode_id", "")
+                        original_id_count += 1
+                    
+                    # Extract target ID components - same logic as source ID
+                    if "_" in target_id:
+                        # Handle case where ID has pattern: number_episode_episode (duplicated episode ID)
+                        if target_id.count("_") >= 2 and target_id.endswith("_" + target_id.split("_")[-1]):
+                            # Extract episode ID (last part)
+                            target_episode_id = target_id.split("_")[-1]
+                            # Extract original ID (everything before the last underscore)
+                            temp = target_id.rsplit("_", 1)[0]
+                            # If still contains underscore, it might be number_episode format
+                            if "_" in temp:
+                                opinion_number, first_episode = temp.split("_", 1)
+                                # Check if first_episode and target_episode_id are the same
+                                if first_episode == target_episode_id:
+                                    original_target_id = opinion_number
+                                else:
+                                    original_target_id = temp
+                            else:
+                                original_target_id = temp
+                        else:
+                            # Standard format: number_episode
+                            parts = target_id.split("_", 1)
+                            original_target_id = parts[0]
+                            target_episode_id = parts[1] if len(parts) > 1 else ""
+                        
+                        logger.debug(f"Parsed target ID {target_id} -> opinion: {original_target_id}, episode: {target_episode_id}")
+                        composite_id_count += 1
+                    else:
+                        original_target_id = target_id
+                        # If episode ID is already provided in the relationship, use it
+                        if not target_episode_id:
+                            target_episode_id = rel.get("target_episode_id", "")
+                        original_id_count += 1
+                    
+                    # Mark successful extraction
+                    successful_id_extractions += 1
+                except Exception as e:
+                    logger.error(f"Error parsing composite ID: {e}")
+                    logger.error(f"Source ID: {source_id}, Target ID: {target_id}")
+                    original_source_id = source_id
+                    original_target_id = target_id
+                    source_episode_id = rel.get("source_episode_id", "")
+                    target_episode_id = rel.get("target_episode_id", "")
+            
+            # Make sure we have both simple numeric and composite format IDs available
+            # Generate different ID formats for better matching in merger service
+            source_id_formats = [
+                original_source_id,  # Basic opinion number
+                f"{original_source_id}_{source_episode_id}" if source_episode_id else "",  # Standard format
+                f"{original_source_id}_{source_episode_id}_{source_episode_id}" if source_episode_id else ""  # Double episode format
+            ]
+            
+            # Filter out empty strings
+            source_id_formats = [f for f in source_id_formats if f]
+            
+            target_id_formats = [
+                original_target_id,  # Basic opinion number
+                f"{original_target_id}_{target_episode_id}" if target_episode_id else "",  # Standard format
+                f"{original_target_id}_{target_episode_id}_{target_episode_id}" if target_episode_id else ""  # Double episode format
+            ]
+            
+            # Filter out empty strings
+            target_id_formats = [f for f in target_id_formats if f]
+            
+            # Log extracted IDs for debugging
+            logger.debug(f"Extracted Source ID variants: {source_id_formats}")
+            logger.debug(f"Extracted Target ID variants: {target_id_formats}")
+            
             relationship = {
-                "source_id": source_id,
-                "target_id": target_id,
+                "source_id": original_source_id,  # Use the extracted opinion ID
+                "target_id": original_target_id,  # Use the extracted opinion ID
                 "relation_type": rel.get("relation_type", RelationshipType.RELATED),
                 "notes": rel.get("notes", ""),
-                "source_episode_id": rel.get("source_episode_id", ""),
-                "target_episode_id": rel.get("target_episode_id", "")
+                "source_episode_id": source_episode_id,
+                "target_episode_id": target_episode_id,
+                "source_episode_title": rel.get("source_episode_title", ""),
+                "target_episode_title": rel.get("target_episode_title", ""),
+                # Add original composite IDs for reference/debugging
+                "original_composite_source_id": original_source_id_composite,
+                "original_composite_target_id": original_target_id_composite,
+                # Add alternate ID formats for more robust matching
+                "source_id_formats": source_id_formats,
+                "target_id_formats": target_id_formats
             }
             
             relationships.append(relationship)
-            
+        
+        logger.info(f"Processed {len(relationships)} relationships for merging "
+                    f"(composite_ids: {composite_id_count}, original_ids: {original_id_count}, "
+                    f"invalid: {invalid_id_count}, successful extractions: {successful_id_extractions})")
+        
+        # Log sample relationships to help with debugging
+        if relationships:
+            sample_size = min(5, len(relationships))
+            logger.info(f"Sample relationships after ID normalization:")
+            for i, rel in enumerate(relationships[:sample_size]):
+                logger.info(f"Relationship {i+1}:")
+                logger.info(f"  Source ID: {rel['source_id']} (from: {rel['original_composite_source_id']})")
+                logger.info(f"  Source Episode ID: {rel['source_episode_id']}")
+                logger.info(f"  Source ID formats: {rel['source_id_formats']}")
+                logger.info(f"  Target ID: {rel['target_id']} (from: {rel['original_composite_target_id']})")
+                logger.info(f"  Target Episode ID: {rel['target_episode_id']}")
+                logger.info(f"  Target ID formats: {rel['target_id_formats']}")
+                logger.info(f"  Relation Type: {rel['relation_type']}")
+        
         return relationships
     
     def _analyze_relationships_heuristic(self, opinions: List[Dict]) -> List[Dict]:

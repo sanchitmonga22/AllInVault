@@ -374,624 +374,218 @@ The system parses this format and converts it to a standardized internal structu
 
 ## Opinion Evolution Tracking System Architecture
 
-The Opinion Evolution Tracking system processes podcast episodes to extract, categorize, and track opinions expressed by speakers across multiple episodes. This comprehensive system identifies relationships between opinions, tracks their evolution, and provides insight into how opinions change over time.
+This document outlines the architecture of the AllInVault Opinion Evolution Tracking System, with a particular focus on the opinion processing pipeline and the relationship between its components.
 
-### System Architecture Diagram
+## System Overview
 
-```
-┌───────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                     OPINION EVOLUTION TRACKING SYSTEM                                      │
-└───────────────────────────────────────────────────────┬───────────────────────────────────────────────────┘
-                                                        │
-                   ┌───────────────────────────────────┐│┌─────────────────────────────────────┐
-                   │         DATA PREPARATION          │││        RELATIONSHIP ANALYSIS        │
-                   │                                   │││                                     │
-                   │  ┌─────────────┐ ┌─────────────┐  │││  ┌─────────────┐  ┌─────────────┐  │
-                   │  │             │ │             │  │││  │             │  │             │  │
-                   │  │ Raw Opinion │ │Categorize & │  │││  │ Semantic    │  │ Relationship│  │
-                   │  │ Extraction  ├─►Standardize  ├──┼┼┼─►│ Similarity  ├──►Detection    │  │
-                   │  │             │ │             │  ││││ │ Analysis    │  │             │  │
-                   │  └─────────────┘ └─────────────┘  ││││ └─────────────┘  └──────┬──────┘  │
-                   │                                   ││││                          │         │
-                   └───────────────────────────────────┘│││                          │         │
-                                                        │││                          │         │
-                                                        │││                          ▼         │
-                   ┌───────────────────────────────────┐│││ ┌─────────────┐  ┌─────────────┐  │
-                   │         EVOLUTION TRACKING        ││││ │             │  │             │  │
-                   │                                   ││││ │ Contradiction│  │ Evolution   │  │
-                   │  ┌─────────────┐ ┌─────────────┐  ││││ │ Detection   │◄─┤ Tracking    │  │
-                   │  │             │ │             │  ││││ │             │  │             │  │
-                   │  │ Evolution   │ │Speaker      │  ││││ └─────────────┘  └──────┬──────┘  │
-                   │  │ Chain       │◄┤Stance       │◄─┼┼┼┘                         │         │
-                   │  │ Building    │ │Tracking     │  ││                           │         │
-                   │  └─────────────┘ └─────────────┘  ││                           │         │
-                   │                                   ││                            │         │
-                   └───────────────────────────────────┘│                            │         │
-                                                        │                            │         │
-                                                        │                            ▼         │
-                   ┌───────────────────────────────────┐│                    ┌─────────────┐  │
-                   │          DATA INTEGRATION         ││                    │             │  │
-                   │                                   ││                    │Opinion      │  │
-                   │  ┌─────────────┐ ┌─────────────┐  ││                    │Merger      │  │
-                   │  │             │ │             │  ││                    │Service     │  │
-                   │  │Unified      │ │Timeline     │  ││                    │            │  │
-                   │  │Opinion      │◄┤Generation   │◄─┼┘                    └─────────────┘  │
-                   │  │Repository   │ │             │  │                                      │
-                   │  └─────────────┘ └─────────────┘  │                                      │
-                   │                                   │                                      │
-                   └───────────────────────────────────┘                                      │
-```
-
-### Opinion Extraction Service Architecture
-
-The modular service architecture enables accurate opinion extraction, categorization, tracking, and merging:
-
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                            Opinion Extraction Service                         │
-└───────────────────────────────┬──────────────────────────────────────────────┘
-                               │
-                               │ Orchestrates
-                               ▼
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                                                                              │
-│  ┌───────────────────┐    ┌──────────────────┐    ┌─────────────────────┐   │
-│  │                   │    │                  │    │                     │   │
-│  │ Raw Extraction    ├───►│ Categorization   ├───►│ Relationship        │   │
-│  │ Service           │    │ Service          │    │ Analysis Service    │   │
-│  │                   │    │                  │    │                     │   │
-│  └───────────────────┘    └──────────────────┘    └──────────┬──────────┘   │
-│                                                              │              │
-│                                                              ▼              │
-│                                                   ┌─────────────────────┐   │
-│                                                   │                     │   │
-│                                                   │ Merger Service      │   │
-│                                                   │                     │   │
-│                                                   └──────────┬──────────┘   │
-│                                                              │              │
-└──────────────────────────────────────────────────────────────┼──────────────┘
-                                                              │
-                                                              ▼
-                            ┌───────────────────────────────────────────────────┐
-                            │                                                   │
-                            │ Checkpoint Service                                │
-                            │                                                   │
-                            └───────────────────┬───────────────────────────────┘
-                                               │
-                                               ▼
-                            ┌──────────────────────────────────────┐
-                            │                                      │
-                            │ Opinion Repository                   │
-                            │                                      │
-                            └──────────────────────────────────────┘
-```
-
-### Component Responsibilities
-
-1. **Raw Extraction Service**
-   - Extracts raw opinions from individual episode transcripts
-   - Focuses on high-quality extraction without considering cross-episode relationships
-   - Captures complete speaker metadata (ID, name, timestamps, stance, reasoning)
-
-2. **Categorization Service**
-   - Standardizes opinion categories
-   - Groups opinions by category for focused relationship analysis
-   - Maps custom categories to standard ones
-
-3. **Relationship Analysis Service**
-   - Analyzes relationships between opinions in the same category
-   - Identifies SAME_OPINION, RELATED, EVOLUTION, and CONTRADICTION relationships
-   - Processes opinions in manageable batches
-
-4. **Merger Service**
-   - Merges opinions that represent the same core opinion
-   - Processes relationship links between opinions
-   - Creates structured Opinion objects with all metadata
-
-5. **Checkpoint Service**
-   - Tracks progress of the opinion extraction process
-   - Stores checkpoint data for each stage of the extraction pipeline
-   - Enables resumable processing of long-running extraction tasks
-   - Manages raw opinion data persistence during extraction
-   - Provides extraction statistics and progress information
-
-6. **Opinion Repository**
-   - Handles persistence of opinions
-   - Provides methods to retrieve existing opinions
-   - Ensures efficient storage and retrieval
-
-### Checkpoint Service Architecture
-
-The Checkpoint Service enables resumable extraction processing with the following components:
-
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                               Checkpoint Service                              │
-└──────────────────────────────────────┬───────────────────────────────────────┘
-                                       │
-           ┌───────────────────────────┼───────────────────────────┐
-           │                           │                           │
-           ▼                           ▼                           ▼
-┌────────────────────────┐  ┌────────────────────────┐  ┌────────────────────────┐
-│                        │  │                        │  │                        │
-│ Stage Completion       │  │ Episode Tracking       │  │ Raw Opinion Storage    │
-│ Tracking               │  │                        │  │                        │
-│                        │  │                        │  │                        │
-└────────────────────────┘  └────────────────────────┘  └────────────────────────┘
-           │                           │                           │
-           └───────────────────────────┼───────────────────────────┘
-                                       │
-                                       ▼
-                        ┌─────────────────────────────────┐
-                        │                                 │
-                        │       Checkpoint File           │
-                        │     (JSON Persistence)          │
-                        │                                 │
-                        └─────────────────────────────────┘
-```
-
-#### Key Features
-
-1. **Stage-based Checkpointing**
-   - Tracks completion of each extraction stage independently
-   - Allows skipping already completed stages when resuming
-   - Provides clear progress indication for complex extraction pipelines
-
-2. **Episode-level Tracking**
-   - Maintains a list of processed episode IDs
-   - Allows selective processing of only new episodes
-   - Prevents duplicate processing of already extracted episodes
-
-3. **Raw Opinion Persistence**
-   - Stores extracted raw opinions in a separate JSON file
-   - Enables resuming from intermediate extraction stages
-   - Reduces need to re-extract opinions from transcripts
-
-4. **Extraction Statistics**
-   - Tracks processing time for each stage
-   - Monitors number of opinions extracted
-   - Provides summary of extraction progress and completion status
-
-5. **Resumable Processing**
-   - Enables stopping and resuming long-running extraction tasks
-   - Preserves intermediate data during extraction
-   - Minimizes repeated work when process is interrupted
-
-6. **JSON-based Persistence**
-   - Uses simple JSON files for checkpoint data storage
-   - Maintains human-readable checkpoint state
-   - Enables easy debugging and manual intervention if needed
-
-### Parallel Processing Architecture
-
-The raw opinion extraction stage has been optimized with parallel processing to improve performance:
-
-```
-┌─────────────────┐     ┌─────────────────┐     ┌────────────────────┐
-│                 │     │                 │     │                    │
-│  Episode Batch  │────▶│  Thread Pool    │────▶│  Opinion Storage   │
-│                 │     │  Executor       │     │                    │
-└─────────────────┘     └─────────────────┘     └────────────────────┘
-                              │  │  │
-                              │  │  │
-                              ▼  ▼  ▼
-                        ┌─────────────────┐
-                        │  LLM Service    │
-                        │  (API Calls)    │
-                        └─────────────────┘
-```
-
-#### Key Features
-
-1. **Batched Processing**
-   - Episodes are processed in configurable batches to manage memory usage
-   - Each batch is processed completely before moving to the next
-
-2. **Thread Pool Executor**
-   - Concurrent extraction using ThreadPoolExecutor
-   - Configurable number of workers
-
-3. **Timeout Management**
-   - Each extraction job has a configurable timeout
-   - Prevents hung jobs from blocking the entire process
-
-4. **Incremental Saving**
-   - Results from each batch are saved immediately
-   - Minimizes data loss in case of interruption
-
-### Enhanced Opinion Data Models
-
-The system uses a comprehensive set of data models to represent opinions, their relationships, and evolution over time:
-
-```
-┌──────────────────┐     ┌───────────────────┐     ┌───────────────────┐
-│                  │     │                   │     │                   │
-│    Opinion       │─────┤  OpinionAppearance│─────┤   SpeakerStance   │
-│                  │     │                   │     │                   │
-└───────┬──────────┘     └───────────────────┘     └───────────────────┘
-        │                                                    ▲
-        │                                                    │
-        │                                           ┌────────┴──────────┐
-        │                                           │                   │
-        │                                           │  PreviousStance   │
-        │                                           │                   │
-        │                                           └───────────────────┘
-        │
-        │
-        ├───────────────┐     ┌───────────────────┐     ┌───────────────────┐
-        │               │     │                   │     │                   │
-        ▼               │     │                   │     │                   │
-┌──────────────────┐    │     │   Relationship    │─────┤RelationshipEvidence│
-│                  │    │     │                   │     │                   │
-│  EvolutionChain  │    │     └───────────────────┘     └───────────────────┘
-│                  │    │
-└───────┬──────────┘    │
-        │               │
-        │               │
-        ▼               │     ┌───────────────────┐     ┌───────────────────┐
-┌──────────────────┐    │     │                   │     │                   │
-│                  │    │     │   SpeakerJourney  │─────┤SpeakerJourneyNode │
-│  EvolutionNode   │    │     │                   │     │                   │
-│                  │    │     └───────────────────┘     └───────────────────┘
-└──────────────────┘    │
-        ▲               │
-        │               │
-        │               │     ┌───────────────────┐     ┌───────────────────┐
-        │               │     │                   │     │                   │
-        └───────────────┼─────┤  EvolutionPattern │     │   MergeRecord     │─────┐
-                        │     │                   │     │                   │     │
-                        │     └───────────────────┘     └───────────────────┘     │
-                        │                                                          │
-                        │                                                          │
-                        │                                                          ▼
-                        │                                               ┌───────────────────┐
-                        │                                               │                   │
-                        └───────────────────────────────────────────────┤ConflictResolution │
-                                                                        │                   │
-                                                                        └───────────────────┘
-```
-
-#### Core Opinion Models
-
-- **Opinion**: The central model representing a unique opinion that can appear across multiple episodes
-  - Contains metadata, description, category info, and appearances
-  - Tracks relationships with other opinions
-  - Contains evolution chain info
-  
-- **OpinionAppearance**: Represents an appearance of an opinion in a specific episode
-  - Links to episode metadata
-  - Contains speaker stances for this appearance
-  - Tracks episode-specific content and context
-
-- **SpeakerStance**: Models a speaker's stance on an opinion in a specific episode
-  - Tracks support, opposition, or neutrality
-  - Includes reasoning behind the stance
-  - Contains timing information
-
-#### Evolution Tracking Models
-
-- **EvolutionChain**: Represents the chronological progression of an opinion across episodes
-  - Contains ordered nodes representing opinion evolution points
-  - Tracks pattern classification
-  - Provides overall evolution metadata
-
-- **EvolutionNode**: Models a single point in an opinion's evolution
-  - Links to a specific opinion ID and episode
-  - Classifies the evolution type (initial, refinement, pivot, etc.)
-  - Contains description of the evolution at this point
-
-- **EvolutionPattern**: Represents common patterns in opinion evolution
-  - Provides pattern name and description
-  - Lists typical steps in this pattern
-  - Links to example chains that exhibit this pattern
-
-#### Speaker Journey Models
-
-- **SpeakerJourney**: Tracks a speaker's stance evolution across episodes
-  - Contains speaker metadata
-  - Maps opinions to journey nodes
-  - Provides current stances on all opinions
-
-- **SpeakerJourneyNode**: Represents a point in a speaker's journey with a specific stance
-  - Links to opinion and episode
-  - Tracks stance changes
-  - Provides reasoning for stance positions
-
-- **PreviousStance**: Extends SpeakerStance to track historical stances
-  - Contains metadata about when and why a stance changed
-  - Links to the episode where the change occurred
-  - Tracks what the stance changed to
-
-#### Relationship Models
-
-- **Relationship**: Models connections between opinions
-  - Classifies relationship type (same, similar, evolution, contradiction)
-  - Contains directional information
-  - Includes confidence scores and evidence
-
-- **RelationshipEvidence**: Provides evidence for why a relationship exists
-  - Describes the evidence in detail
-  - Classifies evidence type (semantic, lexical, temporal, logical, LLM)
-  - Includes confidence score for this piece of evidence
-
-#### Merge Tracking Models
-
-- **MergeRecord**: Tracks when opinions are merged together
-  - Contains source and resulting opinion IDs
-  - Includes merge rationale and method
-  - Tracks conflicts that occurred during merge
-
-- **ConflictResolution**: Models how a conflict was resolved during opinion merging
-  - Documents the conflict field and conflicting values
-  - Tracks resolution method and reasoning
-  - Includes confidence in the resolution
-
-These models work together to provide a comprehensive system for tracking opinions, their relationships, and their evolution across podcast episodes, while maintaining the history of speaker stances and opinion merges.
-
-## Key Algorithms
-
-### Semantic Similarity Detection
-
-Uses a multi-faceted approach:
-1. Embedding-based similarity (using sentence transformers)
-2. LLM verification for borderline cases
-3. Contextual analysis considering speaker, episode context, and timestamps
-
-### Evolution Chain Building
-
-1. Sorts opinions chronologically
-2. Identifies evolution relationships between opinions
-3. Constructs chains showing how opinions develop over time
-4. Classifies evolution types (refinement, pivot, expansion, contraction)
-
-### Speaker Stance Analysis
-
-1. Tracks each speaker's stance on opinions
-2. Identifies changes in stance over time
-3. Provides reasoning for stance changes
-4. Detects contradictions within a speaker's statements
-
-### Checkpoint and Recovery
-
-1. Tracks progress through extraction stages
-2. Persists intermediate extraction data
-3. Identifies already processed episodes
-4. Provides resumable extraction capabilities
-5. Optimizes extraction by skipping completed stages
-
-## Benefits of This Architecture
-
-1. **Scalability**: Pipeline stages can be executed independently or in sequence
-2. **Flexibility**: Each component can be replaced or extended without affecting others
-3. **Maintainability**: Clear separation of concerns makes the codebase easier to maintain
-4. **Extensibility**: New features can be added by creating new pipeline stages
-5. **Robustness**: Each stage can handle errors independently, preventing pipeline failure
-6. **Comprehensive Tracking**: Complete history of opinions across episodes
-7. **Evolution Analysis**: Visibility into how opinions change over time
-8. **Speaker Consistency**: Ability to track speaker positions on topics
-9. **Resumable Processing**: Ability to resume long-running extraction tasks after interruption
-10. **Progress Tracking**: Detailed visibility into extraction progress and completion status
-
-## Technology Stack
-
-- **Language**: Python 3.9+
-- **NLP Libraries**: Sentence Transformers, spaCy
-- **Machine Learning**: PyTorch, scikit-learn
-- **LLM Integration**: OpenAI API, DeepSeek API
-- **Data Storage**: JSON files with structured schemas
-- **Visualization**: Matplotlib, Plotly
-
-## Future Enhancements
-
-1. Database integration for more efficient data storage and retrieval
-2. Advanced opinion evolution visualization tools
-3. Support for additional LLM providers
-4. API layer for web/mobile application integration
-5. Semantic search for finding related opinions across different wording
-6. Streaming transcript processing for very large files
-7. Additional transcript format support (SRT, VTT, etc.)
-8. Distributed processing for large-scale extraction tasks
-9. Real-time extraction progress monitoring interface
-10. Advanced checkpoint compression for efficient storage
-
-# Opinion Extraction System Architecture
-
-## Overview
-
-The Opinion Extraction System is designed to extract, categorize, and analyze opinions from podcast transcripts. It processes podcast episodes in a staged pipeline, tracking progress through a checkpoint system to allow resuming from interruptions.
+The AllInVault Opinion Evolution Tracking System is designed to extract, analyze, and track opinions expressed in podcast episodes over time. It identifies relationships between opinions, tracks how they evolve, and monitors speaker stances across episodes. The system follows a modular, pipeline-based approach where each component focuses on a specific aspect of opinion processing.
 
 ## Core Components
 
-### Data Model
-- **PodcastEpisode**: Contains metadata about a podcast episode
-- **Opinion**: Represents an extracted opinion with properties like title, description, and category
-- **Speaker**: Represents a person expressing an opinion with their stance
+### 1. Data Models
 
-### Repositories
-- **EpisodeRepository**: Manages podcast episode data storage and retrieval
-- **OpinionRepository**: Handles opinion data storage and retrieval
+The system is built around several key data models:
 
-### Services
+- **Opinion**: Represents a single opinion with its metadata, appearances across episodes, and relationships to other opinions
+- **OpinionAppearance**: Records where an opinion appears in specific episodes
+- **SpeakerStance**: Tracks speaker positions on opinions
+- **Category**: Organizes opinions into thematic groups
+- **Relationship**: Defines connections between opinions (same, related, evolution, contradiction)
+- **EvolutionChain**: Links opinions that evolve over time
+- **SpeakerJourney**: Tracks a speaker's position changes over time
+
+### 2. Repositories
+
+Data persistence and retrieval are handled by:
+
+- **OpinionRepository**: Stores and retrieves Opinion objects
+- **CategoryRepository**: Manages opinion categories
+- **EpisodeRepository**: Manages podcast episode data
+
+### 3. Service Layer
+
+The service layer contains the core business logic components:
+
+- **LLMService**: Interfaces with language models for opinion analysis
+- **RawOpinionExtractionService**: Extracts raw opinions from transcripts
+- **OpinionCategorizationService**: Categorizes opinions into thematic groups
+- **OpinionRelationshipService**: Analyzes relationships between opinions
+- **OpinionMergerService**: Merges related opinions and creates Opinion objects
+- **EvolutionDetectionService**: Identifies and tracks opinion evolution
+- **SpeakerTrackingService**: Analyzes speaker behavior and stance changes
+- **CheckpointService**: Manages processing checkpoints and resumable execution
+
+## Processing Pipeline
+
+The opinion processing pipeline consists of six sequential stages:
+
+1. **Raw Extraction**: Extract initial opinions from podcast transcripts
+2. **Categorization**: Group opinions into thematic categories
+3. **Relationship Analysis**: Identify relationships between opinions
+4. **Opinion Merging**: Merge related opinions and create structured objects
+5. **Evolution Detection**: Build chains of opinion evolution
+6. **Speaker Tracking**: Track speaker journeys and stance changes
+
+The pipeline is coordinated by the **OpinionExtractionService** which orchestrates the processing stages and ensures proper data flow between components.
+
+## Detailed Component Architecture
+
+### Opinion Relationship Service
+
+The `OpinionRelationshipService` is responsible for analyzing relationships between opinions. Its primary functions include:
+
+1. **Relationship Analysis**
+   - Groups opinions by category for more focused analysis
+   - Analyzes opinion pairs using LLM-based comparison
+   - Identifies four types of relationships: SAME_OPINION, RELATED, EVOLUTION, and CONTRADICTION
+   - Produces relationship data with source and target opinion IDs
+
+2. **ID Management**
+   - Handles composite IDs that combine opinion and episode identifiers
+   - Provides methods to extract original opinion IDs for compatibility
+   - Ensures proper ID mapping during relationship creation
+
+3. **LLM Integration**
+   - Formats opinions for LLM-based relationship analysis
+   - Processes LLM responses into structured relationship data
+   - Provides fallback mechanisms for handling LLM failures
+
 ```
-                   ┌─────────────────┐
-                   │                 │
-                   │Checkpoint Service│
-                   │                 │
-                   └────────┬────────┘
-                            │
-                            │ tracks progress
-                            ▼
-┌─────────────────────────────────────────────────────┐
-│             Opinion Extraction Service              │
-├─────────┬─────────┬─────────┬──────────┬───────────┤
-│Raw      │Category │Relation-│Opinion   │Evolution  │
-│Extraction│Service  │ship     │Merger    │Service    │
-│Service   │         │Service  │Service   │           │
-└─────────┴─────────┴─────────┴──────────┴───────────┘
+┌─────────────────────────────┐
+│ OpinionRelationshipService  │
+├─────────────────────────────┤
+│ - analyze_relationships()   │
+│ - get_relationships_from_data() │
+└───────────┬─────────────────┘
+            │
+            │ Produces
+            ▼
+┌─────────────────────────────┐
+│ Relationship Data           │
+│ - source_id                 │
+│ - target_id                 │
+│ - relation_type             │
+│ - notes                     │
+└───────────┬─────────────────┘
+            │
+            │ Consumed by
+            ▼
+┌─────────────────────────────┐
+│ OpinionMergerService        │
+└─────────────────────────────┘
 ```
 
-## Process Flow Sequence Diagram
+### Opinion Merger Service
 
-The following sequence diagram illustrates the interaction between the opinion extraction services and the checkpoint system:
+The `OpinionMergerService` processes relationship data to merge and link opinions. Its key responsibilities include:
 
-```mermaid
-sequenceDiagram
-    participant Client
-    participant ExtractionService
-    participant RawExtractionService
-    participant CategorizationService
-    participant RelationshipService
-    participant OpinionMergerService
-    participant CheckpointService
+1. **Relationship Processing**
+   - Processes the relationship data from the relationship service
+   - Handles different types of relationships appropriately:
+     - SAME_OPINION: Merges opinions into a single entity
+     - RELATED: Creates bidirectional links between related opinions
+     - EVOLUTION: Builds chronological evolution chains
+     - CONTRADICTION: Marks contradictory opinion pairs
 
-    Client->>ExtractionService: extract_opinions()
-    ExtractionService->>CheckpointService: load_checkpoint()
-    CheckpointService-->>ExtractionService: checkpoint_data
-    
-    Note over ExtractionService: check if already processed
-    
-    ExtractionService->>RawExtractionService: extract_raw_opinions()
-    RawExtractionService->>RawExtractionService: load_transcript()
-    RawExtractionService->>RawExtractionService: call_llm_for_raw_extraction()
-    RawExtractionService->>RawExtractionService: process_raw_extraction_results()
-    RawExtractionService-->>ExtractionService: raw_opinions
-    
-    ExtractionService->>CheckpointService: mark_episode_stage_complete("raw_extraction")
-    
-    ExtractionService->>CategorizationService: categorize_opinions()
-    CategorizationService->>CategorizationService: _categorize_opinions_batch()
-    CategorizationService->>CheckpointService: has_llm_response()?
-    CheckpointService-->>CategorizationService: cached_response (if exists)
-    CategorizationService->>CategorizationService: call_llm() or use cached result
-    CategorizationService->>CheckpointService: save_llm_response()
-    CategorizationService-->>ExtractionService: categorized_opinions
-    
-    ExtractionService->>CheckpointService: mark_episode_stage_complete("categorization")
-    
-    ExtractionService->>RelationshipService: analyze_relationships()
-    RelationshipService->>RelationshipService: _analyze_opinion_batch()
-    RelationshipService->>RelationshipService: _format_opinions_for_relationship_analysis()
-    RelationshipService->>CheckpointService: has_llm_response()?
-    CheckpointService-->>RelationshipService: cached_response (if exists)
-    RelationshipService->>RelationshipService: _call_llm_for_relationship_analysis()
-    RelationshipService->>CheckpointService: save_llm_response()
-    RelationshipService->>RelationshipService: _process_relationship_results()
-    RelationshipService-->>ExtractionService: relationship_data
-    
-    ExtractionService->>CheckpointService: mark_episode_stage_complete("relationship_analysis")
-    
-    ExtractionService->>OpinionMergerService: process_relationships()
-    OpinionMergerService->>OpinionMergerService: _merge_opinions()
-    OpinionMergerService->>OpinionMergerService: create_opinion_objects()
-    OpinionMergerService-->>ExtractionService: final_opinions
-    
-    ExtractionService->>CheckpointService: mark_episode_stage_complete("opinion_merging")
-    
-    Note over ExtractionService: Evolution detection & Speaker tracking stages follow similar pattern
-    
-    ExtractionService->>ExtractionService: _generate_stage_stats()
-    ExtractionService->>CheckpointService: update_extraction_stats()
-    ExtractionService->>CheckpointService: mark_episode_stage_complete("complete")
-    
-    ExtractionService-->>Client: updated_episodes
+2. **Opinion Merging**
+   - Combines multiple appearances of the same opinion across episodes
+   - Preserves all relevant metadata during merging
+   - Maintains speaker information and stance data
+   - Creates a proper audit trail of merged opinions
+
+3. **Opinion Object Creation**
+   - Transforms processed opinion data into structured Opinion objects
+   - Creates OpinionAppearance and SpeakerStance objects
+   - Links to appropriate categories via CategoryRepository
+   - Prepares opinions for persistent storage
+
+```
+┌─────────────────────────────┐
+│ Raw Opinions                │
+└───────────┬─────────────────┘
+            │
+            │ Input to
+            ▼
+┌─────────────────────────────┐
+│ OpinionMergerService        │
+├─────────────────────────────┤
+│ - process_relationships()   │
+│ - _merge_opinions()         │
+│ - create_opinion_objects()  │
+│ - _verify_relationship_application() │
+└───────────┬─────────────────┘
+            │
+            │ Produces
+            ▼
+┌─────────────────────────────┐
+│ Final Opinion Objects       │
+└─────────────────────────────┘
 ```
 
-## Checkpoint System Operation Flow
+## ID Management Between Stages
 
-The checkpoint system plays a critical role in ensuring reliable processing:
+One of the critical aspects of the pipeline is proper ID management between stages:
 
-1. **Stage Tracking**: 
-   - Each processing stage is tracked separately
-   - Stages progress in sequence: raw_extraction → categorization → relationship_analysis → opinion_merging → evolution_detection → speaker_tracking
-   - The current stage is recorded in `current_stage` within the checkpoint data
+1. **Raw Extraction Stage**
+   - Creates unique IDs for each raw opinion
+   - Associates opinions with episode IDs
 
-2. **LLM Response Caching**:
-   - Each LLM call is assigned a unique ID based on input hash
-   - Before making expensive calls, the system checks for cached responses
-   - Results are stored in stage-specific directories (e.g., `data/checkpoints/llm_responses/relationship_analysis/`)
-   - This prevents duplicate processing when restarting interrupted runs
+2. **Relationship Analysis Stage**
+   - May create composite IDs combining opinion_id and episode_id
+   - Needs to track both composite and original IDs
 
-3. **Progress Statistics**:
-   - Detailed stats are maintained for each stage and updated after completion
-   - Stats include counts of processed opinions, categories, relationships, etc.
-   - The checkpoint service maintains a global stats collection in extraction_stats
+3. **Opinion Merging Stage**
+   - Must handle both original and composite IDs
+   - Redirects IDs when opinions are merged (using merged_map)
+   - Preserves original opinion references for traceability
 
-4. **Resumption Logic**:
-   - When starting/resuming processing:
-     1. Load the checkpoint data
-     2. Identify the last completed stage
-     3. Either continue from the last completed stage or start over
-     4. For each stage, check if it's already completed before processing
+When relationship analysis returns composite IDs, the merger service needs to extract the original opinion IDs to properly match them to the raw opinions. The `get_relationships_from_data` method in the relationship service is responsible for normalizing these IDs for the merger service.
 
-5. **Episode-Level Tracking**:
-   - Each episode's processing state is tracked independently
-   - Episodes can be in different stages of processing
-   - The system can process new episodes while preserving results from previously processed ones
+```
+┌─────────────────────────────┐
+│ ID Management Flow          │
+├─────────────────────────────┤
+│ Raw Opinion ID              │
+│       │                     │
+│       ▼                     │
+│ Possible Composite ID       │
+│ (opinion_id_episode_id)     │
+│       │                     │
+│       ▼                     │
+│ Normalized Original ID      │
+│       │                     │
+│       ▼                     │
+│ Possible Merged ID          │
+│ (after opinion merging)     │
+└─────────────────────────────┘
+```
 
-## LLM Interaction Pattern
+## Single-Stage Processing
 
-For each stage requiring LLM processing:
+For debugging and validation purposes, the system supports running a single processing stage at a time:
 
-1. **Check Cache**:
-   - Generate a unique query ID based on input content hash
-   - Check if a cached response exists for this query ID
-   - If found, use the cached result to avoid redundant API calls
+1. The `continue_opinion_processing.py` script provides a `--single-stage` flag
+2. When enabled, only the specified stage is executed
+3. Debug output files are created to examine the stage's inputs and outputs
+4. Detailed logging provides insights into the stage's processing
 
-2. **Format Input**:
-   - Prepare the data in a format suitable for LLM processing
-   - Include all necessary context and instructions
-
-3. **Make API Call**:
-   - Call the LLM service with appropriate system and user prompts
-   - Process the response into structured data
-
-4. **Save Response**:
-   - Cache the LLM response with the query ID
-   - Store metadata about the query for analysis
-   - Update progress statistics
-
-5. **Handle Errors**:
-   - Record any errors encountered during LLM processing
-   - Provide detailed logs for debugging
-   - Store error information in the checkpoint
-
-This checkpoint-based architecture ensures that the opinion extraction process is robust against interruptions, allows for efficient resumption, and maintains detailed records of processing status at every stage.
-
-## Data Flow
-
-1. Raw opinion extraction from transcripts
-2. Opinion categorization 
-3. Relationship analysis between opinions
-4. Opinion merging based on relationships
-5. Evolution detection of opinions over time
-6. Speaker behavior tracking
+This approach allows for:
+- Isolating problems in specific stages
+- Validating data flow between stages
+- Examining intermediate results
+- Debugging complex processing logic
 
 ## Checkpoint System
 
-The checkpoint system ensures the process can be resumed from interruptions:
-- Tracks completion of each stage for each episode
-- Saves intermediate data (raw opinions)
-- Maintains extraction statistics
-- Caches LLM responses to avoid redundant API calls
-- Provides granular progress tracking for each processing stage
+The `CheckpointService` ensures that the processing pipeline can be interrupted and resumed:
 
-### LLM Response Caching
+1. Tracks completed stages for each episode
+2. Stores intermediate data products
+3. Manages LLM response caching
+4. Provides statistics on the extraction process
 
-The system implements a sophisticated LLM response caching mechanism:
-1. Each LLM call generates a unique query ID based on input hash
-2. Responses are stored by stage and query ID in JSON files
-3. Before making expensive LLM calls, the system checks for cached responses
-4. Error responses are also cached for debugging purposes
-5. Metadata about each query is stored for analysis
+## Conclusion
 
-This approach provides several benefits:
-- Reduces processing costs by eliminating redundant LLM calls
-- Enables resuming from failure points without reprocessing
-- Provides detailed analytics on LLM usage patterns
-- Allows for offline analysis of LLM responses
+The AllInVault Opinion Evolution Tracking System architecture is designed for modularity, extensibility, and robustness. Each component has clear responsibilities and interfaces, enabling easy debugging and enhancement. The pipeline approach allows for incremental processing and checkpointing, making it suitable for handling large volumes of podcast data efficiently.
 
-## Output
-
-- Processed opinions with relationships and evolution data
-- Extraction statistics (opinion counts, categories, speakers)
-- Merged opinions showing how opinions evolve over time
+The ID management between stages is a critical component that requires careful handling, especially in the relationship analysis and opinion merging stages. The enhanced debugging capabilities with single-stage processing provide tools to identify and fix issues in these complex interactions.

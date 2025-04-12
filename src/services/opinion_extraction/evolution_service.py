@@ -7,7 +7,7 @@ and building evolution chains and speaker journeys.
 
 import logging
 import uuid
-from typing import Dict, List, Optional, Any, Set, Tuple
+from typing import Dict, List, Optional, Any, Set, Tuple, Union
 from datetime import datetime
 from collections import defaultdict
 
@@ -40,14 +40,14 @@ class EvolutionDetectionService(BaseOpinionService):
     def build_evolution_chains(
         self,
         opinions: List[Opinion],
-        relationships: List[Relationship]
+        relationships: List[Union[Dict, Relationship]]
     ) -> List[EvolutionChain]:
         """
         Build evolution chains from opinions and their relationships.
         
         Args:
             opinions: List of opinion objects
-            relationships: List of relationship objects
+            relationships: List of relationship objects or dictionaries
             
         Returns:
             List of evolution chains
@@ -57,9 +57,23 @@ class EvolutionDetectionService(BaseOpinionService):
         # Create a map of opinion IDs to their objects
         opinion_map = {op.id: op for op in opinions}
         
+        # Convert dictionary relationships to Relationship objects if needed
+        processed_relationships = []
+        for rel in relationships:
+            if isinstance(rel, dict):
+                # Create Relationship object from dictionary
+                processed_relationships.append(Relationship(
+                    opinion_a_id=rel['source_id'],
+                    opinion_b_id=rel['target_id'],
+                    relationship_type=rel['relation_type'].lower(),
+                    description=rel.get('notes', '')
+                ))
+            else:
+                processed_relationships.append(rel)
+        
         # Filter out only evolution relationships
         evolution_relationships = [
-            rel for rel in relationships 
+            rel for rel in processed_relationships 
             if rel.relationship_type == RelationshipType.EVOLUTION
         ]
         
@@ -497,14 +511,14 @@ class EvolutionDetectionService(BaseOpinionService):
     def analyze_opinion_evolution(
         self,
         opinions: List[Opinion],
-        relationships: List[Relationship]
+        relationships: List[Union[Dict, Relationship]]
     ) -> Dict[str, Any]:
         """
         Analyze the evolution of opinions, build chains, and create speaker journeys.
         
         Args:
             opinions: List of opinion objects
-            relationships: List of relationship objects
+            relationships: List of relationship objects or dictionaries
             
         Returns:
             Dictionary with evolution chains and speaker journeys
@@ -537,54 +551,90 @@ class EvolutionDetectionService(BaseOpinionService):
         opinions: List[Opinion],
         evolution_chains: List[EvolutionChain],
         speaker_journeys: List[SpeakerJourney]
-    ) -> bool:
-        """
-        Save evolution data back to the opinions and repository.
-        
-        Args:
-            opinions: List of opinion objects
-            evolution_chains: List of evolution chain objects
-            speaker_journeys: List of speaker journey objects
-            
-        Returns:
-            True if successful, False otherwise
-        """
-        if not self.opinion_repository:
-            logger.warning("No opinion repository provided, cannot save evolution data")
-            return False
-        
+    ) -> None:
+        """Save evolution data to opinions."""
         try:
-            # Link evolution chains to root opinions
-            opinion_map = {op.id: op for op in opinions}
-            
+            if not self.opinion_repository:
+                logger.error("Opinion repository not initialized")
+                return
+
+            # Create opinion lookup map
+            opinion_map = {opinion.id: opinion for opinion in opinions}
+            opinions_to_save = set()
+
+            # Process evolution chains
             for chain in evolution_chains:
-                if chain.root_node_id not in chain.nodes:
+                if not chain or not chain.nodes:
                     continue
-                    
-                root_node = chain.nodes[chain.root_node_id]
-                root_opinion_id = root_node.opinion_id
-                
-                if root_opinion_id in opinion_map:
-                    # Add evolution chain to the opinion
-                    opinion_map[root_opinion_id].evolution_chain = chain.id
-                    
-                    # Add summary in opinion metadata
-                    if 'evolution_summary' not in opinion_map[root_opinion_id].metadata:
-                        opinion_map[root_opinion_id].metadata['evolution_summary'] = {}
-                    
-                    opinion_map[root_opinion_id].metadata['evolution_summary']['chain_id'] = chain.id
-                    opinion_map[root_opinion_id].metadata['evolution_summary']['title'] = chain.title
-                    opinion_map[root_opinion_id].metadata['evolution_summary']['node_count'] = len(chain.nodes)
-            
-            # Save the updated opinions
-            for opinion in opinions:
-                self.opinion_repository.save_opinion(opinion)
-            
-            # TODO: Save evolution chains and speaker journeys to their own repositories
-            # when those are implemented
-            
-            return True
-        
+
+                # Update opinions in this chain
+                for node in chain.nodes:
+                    # Handle string IDs, dictionary format, and object format
+                    if isinstance(node, str):
+                        node_opinion_id = node
+                    elif hasattr(node, 'opinion_id'):
+                        node_opinion_id = node.opinion_id
+                    elif isinstance(node, dict):
+                        node_opinion_id = node.get('opinion_id', '')
+                    else:
+                        logger.warning(f"Unexpected node type in chain {chain.id}: {type(node)}")
+                        continue
+
+                    opinion = opinion_map.get(node_opinion_id)
+                    if opinion:
+                        opinion.evolution_chain_id = chain.id
+                        if "evolution_chains" not in opinion.metadata:
+                            opinion.metadata["evolution_chains"] = []
+                        if chain.id not in opinion.metadata["evolution_chains"]:
+                            opinion.metadata["evolution_chains"].append(chain.id)
+                        opinions_to_save.add(opinion)
+                    else:
+                        logger.warning(f"Opinion {node_opinion_id} from evolution chain {chain.id} not found in provided opinions")
+
+                logger.debug(f"Processed evolution chain {chain.id} with {len(chain.nodes)} nodes")
+
+            # Process speaker journeys
+            for journey in speaker_journeys:
+                if not journey or not journey.nodes:
+                    continue
+
+                # Update opinions in this journey
+                for node in journey.nodes:
+                    # Handle string IDs, dictionary format, and object format
+                    if isinstance(node, str):
+                        node_opinion_id = node
+                    elif hasattr(node, 'opinion_id'):
+                        node_opinion_id = node.opinion_id
+                    elif isinstance(node, dict):
+                        node_opinion_id = node.get('opinion_id', '')
+                    else:
+                        logger.warning(f"Unexpected node type in journey {journey.id}: {type(node)}")
+                        continue
+
+                    opinion = opinion_map.get(node_opinion_id)
+                    if opinion:
+                        opinion.speaker_journey_id = journey.id
+                        if "speaker_journeys" not in opinion.metadata:
+                            opinion.metadata["speaker_journeys"] = []
+                        if journey.id not in opinion.metadata["speaker_journeys"]:
+                            opinion.metadata["speaker_journeys"].append(journey.id)
+                        opinions_to_save.add(opinion)
+                    else:
+                        logger.warning(f"Opinion {node_opinion_id} from speaker journey {journey.id} not found in provided opinions")
+
+                logger.debug(f"Processed speaker journey {journey.id} with {len(journey.nodes)} nodes")
+
+            # Batch save all modified opinions
+            if opinions_to_save:
+                try:
+                    self.opinion_repository.save_opinions(list(opinions_to_save))
+                    logger.info(f"Successfully saved {len(opinions_to_save)} opinions with evolution data")
+                except Exception as e:
+                    logger.error(f"Failed to save opinions: {str(e)}")
+                    raise
+            else:
+                logger.info("No opinions needed updating")
+
         except Exception as e:
-            logger.error(f"Error saving evolution data: {e}")
-            return False 
+            logger.error(f"Error saving evolution data: {str(e)}")
+            raise

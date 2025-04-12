@@ -278,4 +278,6 @@ Desktop.ini
 .cursorrules
 
 /data/webm
+/data/checkpoints
 /data/embedding_chunks
+/data/opinions

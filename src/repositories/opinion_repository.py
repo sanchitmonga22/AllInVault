@@ -234,17 +234,25 @@ class OpinionRepository:
             opinion: The opinion to save
         """
         self.opinions[opinion.id] = opinion
-        self._save_opinions()
+        # Don't save to file immediately to avoid redundant saves
     
     def save_opinions(self, opinions: List[Opinion]) -> None:
         """
-        Save multiple opinions to the repository.
+        Save multiple opinions to the repository and persist to file.
         
         Args:
             opinions: List of opinions to save
         """
         for opinion in opinions:
             self.opinions[opinion.id] = opinion
+        # Save to file once after all opinions are added
+        self._save_opinions()
+    
+    def flush(self) -> None:
+        """
+        Force a save of all opinions to the file system.
+        Use this when you need to ensure all changes are persisted.
+        """
         self._save_opinions()
     
     def delete_opinion(self, opinion_id: str) -> bool:

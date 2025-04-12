@@ -63,6 +63,9 @@ class Relationship:
     evidence: List[RelationshipEvidence] = field(default_factory=list)  # Evidence supporting this relationship
     confidence: float = 0.8  # Overall confidence in this relationship
     metadata: Dict[str, Any] = field(default_factory=dict)
+    created_at: datetime = field(default_factory=datetime.now)  # When this relationship was created
+    direction: str = "undirected"  # Direction of the relationship (directed, undirected)
+    similarity_score: Optional[float] = None  # Optional similarity score between opinions
     
     def __post_init__(self):
         """Normalize date to ensure consistent timezone handling."""

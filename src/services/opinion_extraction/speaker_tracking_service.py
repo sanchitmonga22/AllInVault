@@ -10,6 +10,7 @@ import uuid
 from typing import Dict, List, Optional, Any, Set, Tuple
 from datetime import datetime
 from collections import defaultdict
+import json
 
 from src.models.opinions.opinion import Opinion, OpinionAppearance, SpeakerStance
 from src.models.opinions.previous_stance import PreviousStance
@@ -344,30 +345,65 @@ class SpeakerTrackingService(BaseOpinionService):
         
         # Track speaker stances for each opinion
         speaker_stances = self.track_speaker_stances(opinions)
+        logger.debug(f"Generated speaker stances for {len(speaker_stances)} speakers")
         
         # Detect stance changes
         stance_changes = self.detect_stance_changes(speaker_stances)
+        logger.debug(f"Detected stance changes for {len(stance_changes)} speakers")
         
         # Create previous stance objects
         previous_stances = defaultdict(list)
         
         # For each speaker
         for speaker_id, opinions_map in stance_changes.items():
+            logger.debug(f"Processing stance changes for speaker {speaker_id} across {len(opinions_map)} opinions")
+            
             # For each opinion with changes
             for opinion_id, changes in opinions_map.items():
+                logger.debug(f"Processing {len(changes)} changes for opinion {opinion_id}")
+                
                 # For each change
                 for change in changes:
-                    previous_stance = PreviousStance(
-                        speaker_stance_id=f"{speaker_id}_{opinion_id}_{change['from_episode']}",
-                        episode_id=change['from_episode'],
-                        episode_date=change['from_date'],
-                        stance=change['from_stance'],
-                        change_reasoning=f"Changed to {change['to_stance']} in episode {change['to_episode_title']}"
+                    logger.debug(
+                        f"Processing stance change for speaker {speaker_id} on opinion {opinion_id}: "
+                        f"{change['from_stance']} -> {change['to_stance']} "
+                        f"(Episode {change['from_episode']} -> {change['to_episode']})"
                     )
                     
-                    previous_stances[opinion_id].append(previous_stance)
+                    try:
+                        # Create a SpeakerStance object for the previous stance
+                        speaker_stance = SpeakerStance(
+                            speaker_id=speaker_id,
+                            speaker_name=change.get('speaker_name', f"Speaker {speaker_id}"),
+                            stance=change['from_stance'],
+                            reasoning=change.get('from_reasoning')
+                        )
+                        
+                        # Create PreviousStance using from_speaker_stance
+                        previous_stance = PreviousStance.from_speaker_stance(
+                            stance=speaker_stance,
+                            episode_id=change['from_episode'],
+                            episode_title=change['from_episode_title'],
+                            date=change['from_date'],
+                            changed_in_episode_id=change['to_episode'],
+                            changed_at=change['to_date'],
+                            change_reason=f"Changed to {change['to_stance']} in episode {change['to_episode_title']}",
+                            next_stance=change['to_stance']
+                        )
+                        
+                        previous_stances[opinion_id].append(previous_stance)
+                        logger.debug(f"Successfully created PreviousStance record for opinion {opinion_id}")
+                        
+                    except Exception as e:
+                        logger.error(
+                            f"Error creating PreviousStance for speaker {speaker_id} on opinion {opinion_id}: {str(e)}\n"
+                            f"Change data: {json.dumps(change, default=str)}"
+                        )
+                        raise
         
-        return dict(previous_stances)
+        result = dict(previous_stances)
+        logger.info(f"Generated {sum(len(stances) for stances in result.values())} previous stance records across {len(result)} opinions")
+        return result
     
     def analyze_speaker_consistency(
         self,

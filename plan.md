@@ -197,6 +197,32 @@ We'll implement a comprehensive system to track how opinions evolve across podca
   - [x] Document configuration options
   - [x] Add troubleshooting guide
 
+### Phase 7: Enhanced Debugging & Visibility (Current)
+
+- [x] **7.1. Implement single-stage processing**
+  - [x] Update continue_opinion_processing.py to run one stage at a time
+  - [x] Add detailed stage output and statistics
+  - [x] Implement debug output file generation
+  - [x] Add stage-specific summaries
+
+- [ ] **7.2. Fix relationship data application**
+  - [ ] Debug and fix ID mapping in merger service
+  - [ ] Ensure proper relationship data flow between stages
+  - [ ] Add validation of relationship application
+  - [ ] Implement enhanced error reporting
+
+- [ ] **7.3. Enhance pipeline observability**
+  - [ ] Add detailed logging at critical points
+  - [ ] Create stage-specific validation tools
+  - [ ] Implement data integrity checks between stages
+  - [ ] Add visual debugging outputs
+
+- [ ] **7.4. Implement regression testing**
+  - [ ] Create test cases for relationship application
+  - [ ] Add comparison against expected outputs
+  - [ ] Implement automated verification
+  - [ ] Add CI/CD pipeline for testing
+
 ## Deliverables
 
 1. **Core Services**
@@ -224,6 +250,7 @@ We'll implement a comprehensive system to track how opinions evolve across podca
    - Raw opinion processor
    - Analysis and visualization tools
    - Resumable extraction example script
+   - Single-stage processing tool with detailed output
 
 5. **Documentation**
    - Complete architecture documentation
@@ -253,6 +280,7 @@ We'll implement a comprehensive system to track how opinions evolve across podca
 7. Generate insights about opinion evolution patterns
 8. Provide robust checkpoint and resumption capabilities
 9. Support interruption and recovery of long-running processes
+10. Enable detailed debugging of individual pipeline stages
 
 ## Milestone Schedule
 
@@ -261,4 +289,74 @@ We'll implement a comprehensive system to track how opinions evolve across podca
 3. **Week 6**: Complete relationship analysis and opinion merging ✓
 4. **Week 8**: Complete evolution tracking and speaker journey analysis ✓
 5. **Week 10**: Complete integration and main pipeline ✓
-6. **Week 12**: Complete testing, refinement, and documentation ✓ 
+6. **Week 12**: Complete testing, refinement, and documentation ✓
+7. **Current**: Implement enhanced debugging and fix relationship issues
+
+## Current Issues and Fixes Required
+
+### Issue: Relationship Data Not Applied to Processed Opinions
+
+Analysis of the processed opinions revealed that relationship data from the relationship analysis stage is not being properly applied to the final opinions. The following specific issues need to be addressed:
+
+#### Issues to Fix:
+
+1. **Empty relationship fields in processed opinions**:
+   - All opinions have `contradicts_opinion_id: null` despite 67 CONTRADICTION relationships identified
+   - All opinions have empty `evolution_chain: []` despite 133 EVOLUTION relationships identified
+   - All opinions have empty `related_opinions: []` despite 1,107 RELATED relationships identified
+   - No opinions have `is_contradiction: true`
+
+2. **ID format inconsistency**:
+   - The relationship service's `analyze_relationships` method uses composite IDs (opinion_id_episode_id)
+   - The merger service may be looking for simple IDs, causing relationship matching to fail
+
+3. **Data flow in merger service**:
+   - Verify that relationship data flows correctly from relationship_service.py to merger_service.py
+   - Check for any exceptions being caught and suppressed during relationship application
+
+4. **Verification steps**:
+   - Add logging to track relationship processing
+   - Add validation to confirm relationships are being correctly applied
+   - Implement ID mapping and conversion properly
+
+#### Action Plan:
+
+1. **Fix ID handling in relationship and merger services**:
+   - [x] Fix the `get_relationships_from_data` method to ensure consistent ID formats
+   - [x] Ensure proper ID extraction in merger_service.py's `process_relationships` method
+   - [x] Add robust ID matching with fallback mechanisms
+
+2. **Enhance merger service error handling**:
+   - [x] Add detailed logging in the relationship application process
+   - [x] Implement better exception handling with specific error messages
+   - [x] Add validation steps to confirm relationship data is properly formatted
+
+3. **Test and verify fixes**:
+   - [ ] Add specific tests for relationship application
+   - [ ] Run the pipeline with fixed code and verify relationship data in processed opinions
+   - [ ] Validate the counts of each relationship type match the analysis stats
+
+4. **Improve pipeline monitoring**:
+   - [x] Add detailed progress reporting during relationship application
+   - [x] Create verification tools to validate data integrity across pipeline stages
+   - [x] Implement relationship data summary statistics for verification
+
+### Recent Updates and Findings
+
+1. **Enhanced Processing Script**:
+   - Added single-stage processing capability to continue_opinion_processing.py
+   - Implemented detailed output and stage statistics for each stage
+   - Added debug file output to track data at each stage
+   - Improved error handling and reporting
+
+2. **Merger Service Analysis**:
+   - The `process_relationships` method is correctly designed to handle different relationship types
+   - It properly handles SAME_OPINION (merging), RELATED (linking), EVOLUTION (chain building), and CONTRADICTION relationships
+   - The verification process (`_verify_relationship_application`) is well-designed but may have issues with ID mapping
+   - The issue appears to be with how IDs are handled between the relationship analysis stage and the merging stage
+
+3. **Next Steps**:
+   - Test the enhanced script running one stage at a time
+   - Focus on the relationship_analysis stage to validate the format of relationship data
+   - Examine the ID mapping between relationship_analysis and opinion_merging stages
+   - Validate the relationship data is properly passed to the merger service 
