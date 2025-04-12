@@ -150,6 +150,16 @@ class Opinion:
     confidence: float = 0.0  # Confidence score for opinion detection
     metadata: Dict[str, Any] = field(default_factory=dict)
     
+    def __hash__(self) -> int:
+        """Make Opinion hashable by its ID."""
+        return hash(self.id)
+    
+    def __eq__(self, other: Any) -> bool:
+        """Compare Opinion objects by their ID."""
+        if not isinstance(other, Opinion):
+            return NotImplemented
+        return self.id == other.id
+    
     def add_appearance(self, appearance: OpinionAppearance) -> None:
         """Add an episode appearance to this opinion."""
         # Check if we already have an appearance for this episode
